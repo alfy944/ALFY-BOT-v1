@@ -82,4 +82,8 @@ build/
 # Misc
 *.swp
 *~ 
-.cache/
+.cache/venv/
+.venv/
+backup-*.tar.gz
+n8n.sqlite
+.env
