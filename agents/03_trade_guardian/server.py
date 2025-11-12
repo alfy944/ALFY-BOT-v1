@@ -31,6 +31,7 @@ async def manage_position_endpoint(input_data: GuardianInput):
         )
         return decision
     except Exception as e:
+        # Questo è un gestore di errori generico, va bene così
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/")
