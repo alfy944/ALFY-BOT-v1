@@ -1,27 +1,21 @@
-# Usa un'immagine Python completa
-FROM python:3.10
+# Usa un'immagine Python ufficiale e leggera
+FROM python:3.10-slim
 
-# Imposta la cartella di lavoro
+# Imposta la cartella di lavoro all'interno del container
 WORKDIR /app
 
-# Aggiorna pip, lo strumento di installazione
-RUN pip install --upgrade pip
+# Copia il file dei requisiti per primo, per sfruttare la cache di Docker
+COPY requirements.txt .
 
-# --- LA LISTA DELLA SPESA FINALE ---
+# Installa le dipendenze Python elencate nel file requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# 1. Installa tutte le librerie base in un colpo solo:
-#    fastapi, uvicorn, pandas, numpy, flask, ccxt, e l'ultimo mancante, pybit.
-RUN pip install --no-cache-dir fastapi "uvicorn[standard]" pandas "numpy<2.0.0" flask ccxt pybit
+# COMANDO CHIAVE: Scarica i corpora (dizionari/modelli) necessari per TextBlob.
+# Questo comando viene eseguito dopo che textblob è stato installato da pip.
+RUN python -m textblob.download_corpora
 
-# 2. Copia il file ZIP di pandas-ta che abbiamo messo a mano nella cartella
-COPY pandas-ta.zip .
+# Copia il codice sorgente dell'agente nel container
+COPY main.py .
 
-# 3. Installa pandas-ta dal file locale, aggirando ogni problema di rete
-RUN pip install --no-cache-dir pandas-ta.zip
-
-# --- FINE ---
-
-# Copia il codice della tua applicazione e avvia il server
-COPY . .
-EXPOSE 8000
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
+# Comando per avviare l'applicazione API quando il container parte
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

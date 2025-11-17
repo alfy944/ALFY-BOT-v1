@@ -1,63 +1,63 @@
-def manage_trade(current_price: float, entry_price: float, direction: str, tech_analysis: dict) -> dict:
-    """
-    Analizza una posizione aperta e decide come aggiornare SL e TP.
+from fastapi import FastAPI
+from pydantic import BaseModel
+import httpx
+import os
 
-    Args:
-        current_price: Il prezzo attuale del mercato.
-        entry_price: Il prezzo a cui siamo entrati nell'operazione.
-        direction: 'LONG' o 'SHORT'.
-        tech_analysis: L'output completo e aggiornato dell'agente tecnico.
+# Modello dei dati che riceviamo da n8n (solo il simbolo e la direzione)
+class TradeSignal(BaseModel):
+    symbol: str
+    side: str # "Buy" o "Sell"
+    current_price: float # Aggiungiamo il prezzo attuale per i calcoli
 
-    Returns:
-        Un dizionario con le azioni da intraprendere.
-    """
+app = FastAPI()
+
+# URL dell'agente esecutore (il prossimo nella catena)
+EXECUTOR_URL = "http://bybit-executor:8000/place_order"
+
+RISK_PER_TRADE_USD = 10.00  # Rischio massimo per operazione (es. 10 USD)
+STOP_LOSS_PERCENTAGE = 0.01 # 1% (lo stesso che userà l'esecutore)
+
+@app.post("/validate_and_size")
+async def validate_and_size(signal: TradeSignal):
+    print(f"--- TRADE GUARDIAN: Segnale ricevuto per {signal.symbol} ---")
+
+    # --- LOGICA DI POSITION SIZING ---
+    # Calcoliamo la dimensione della posizione per non rischiare più di 10 USD
     
-    # Estraiamo i dati chiave dalla nuova analisi
-    rsi = tech_analysis.get('rsi')
-    macd = tech_analysis.get('macd')
-    macd_signal = tech_analysis.get('macd_signal')
-    trend = tech_analysis.get('trend_strength')
-
-    # Calcoliamo il profitto/perdita attuale (P/L)
-    if direction == 'LONG':
-        p_l_ratio = (current_price - entry_price) / entry_price
-    else: # SHORT
-        p_l_ratio = (entry_price - current_price) / entry_price
-
-    # --- LOGICA DI GESTIONE ---
-    action = "HOLD" # Azione di default
-    comment = "Le condizioni non richiedono un intervento."
-    new_stop_loss = None # Lascia invariato di default
-
-    # 1. Regola di Chiusura Anticipata (Protezione Capitale)
-    # Se il trend si è invertito con forza, chiudiamo prima di toccare lo SL.
-    is_long_and_reversing = direction == 'LONG' and macd < macd_signal and trend < -0.3
-    is_short_and_reversing = direction == 'SHORT' and macd > macd_signal and trend > 0.3
-
-    if p_l_ratio < 0 and (is_long_and_reversing or is_short_and_reversing):
-        action = "CLOSE_NOW"
-        comment = f"Chiusura anticipata: il trend si è invertito con forza (Trend: {trend:.2f})."
-        return {"action": action, "comment": comment}
-
-    # 2. Trailing Stop (Protezione Profitto)
-    # Se siamo in profitto, spostiamo lo stop loss a breakeven o più su.
-    if p_l_ratio > 0.005: # Se siamo in profitto di almeno lo 0.5%
-        if direction == 'LONG':
-            # Sposta lo SL leggermente sopra il prezzo di ingresso
-            new_stop_loss = entry_price * 1.001 
-            action = "UPDATE_SL"
-            comment = f"Profitto rilevato. Spostamento SL a breakeven ({new_stop_loss:.2f}) per proteggere l'investimento."
-        elif direction == 'SHORT':
-            # Sposta lo SL leggermente sotto il prezzo di ingresso
-            new_stop_loss = entry_price * 0.999
-            action = "UPDATE_SL"
-            comment = f"Profitto rilevato. Spostamento SL a breakeven ({new_stop_loss:.2f}) per proteggere l'investimento."
-
-    # In futuro qui potremmo aggiungere la logica per il take profit parziale
-
-    return {
-        "action": action,
-        "new_stop_loss": new_stop_loss,
-        "comment": comment,
-        "current_p_l_ratio": p_l_ratio
+    # 1. Calcola a quanto corrisponde l'1% di stop loss in USD
+    stop_loss_price_diff = signal.current_price * STOP_LOSS_PERCENTAGE
+    if stop_loss_price_diff == 0:
+        return {"status": "error", "message": "Differenza di prezzo per SL è zero, impossibile calcolare la quantità."}
+        
+    # 2. Calcola la quantità (qty) di asset da acquistare/vendere
+    # Formula: Rischio in USD / (Prezzo di SL in USD per unità)
+    quantity = RISK_PER_TRADE_USD / stop_loss_price_diff
+    
+    print(f"Prezzo attuale: {signal.current_price}")
+    print(f"Rischio per trade: ${RISK_PER_TRADE_USD}")
+    print(f"Stop Loss (1%): {stop_loss_price_diff} USD per unità")
+    print(f"Quantità calcolata: {quantity:.6f} {signal.symbol.split('/')[0]}")
+    
+    # 3. Prepara l'ordine completo da inviare all'esecutore
+    final_order = {
+        "symbol": signal.symbol,
+        "side": signal.side,
+        "qty": round(quantity, 6) # Arrotondiamo per evitare problemi con l'API
     }
+
+    # 4. Inoltra l'ordine all'agente esecutore
+    print(f">>> Inoltrando ordine validato a Bybit Executor...")
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(EXECUTOR_URL, json=final_order, timeout=30.0)
+            response.raise_for_status() # Lancia un errore se la risposta è 4xx o 5xx
+            
+            print(f"<<< Risposta ricevuta da Bybit Executor.")
+            return response.json()
+            
+    except httpx.RequestError as e:
+        print(f"!!! ERRORE CRITICO: Impossibile comunicare con Bybit Executor a {EXECUTOR_URL}. Dettagli: {e}")
+        return {"status": "error", "message": f"Impossibile contattare l'esecutore: {e}"}
+    except Exception as e:
+        print(f"!!! ERRORE SCONOSCIUTO: {e}")
+        return {"status": "error", "message": str(e)}

@@ -1,39 +1,45 @@
-# agents/04_bybit_executor/server.py
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Optional
 
-from flask import Flask, jsonify, request
-# Importiamo la nostra funzione per il saldo dal file main.py
-from main import get_wallet_balance 
-import os
+# Importiamo le nostre nuove funzioni
+from main import get_wallet_balance, place_order
 
-app = Flask(__name__)
+class OrderInput(BaseModel):
+    symbol: str
+    side: str # "Buy" o "Sell"
+    qty: float
+    reason: Optional[str] = "Decisione del workflow n8n"
 
-@app.route('/get-balance', methods=['GET'])
-def balance_endpoint():
+app = FastAPI()
+
+@app.get("/")
+def read_root():
+    return {"message": "Bybit Executor Agent è attivo."}
+
+@app.get("/balance")
+def get_balance_endpoint(coin: str = "USDT"):
+    balance = get_wallet_balance(coin)
+    if balance is None:
+        raise HTTPException(status_code=500, detail="Errore nel contattare l'API di Bybit.")
+    return balance
+
+@app.post("/place_order")
+def place_order_endpoint(order: OrderInput):
     """
-    Endpoint per recuperare il saldo di una specifica moneta.
-    Per ora, la moneta è fissa (USDT), ma in futuro potremmo
-    passarla come parametro.
+    Endpoint per ricevere una richiesta di piazzare un ordine e registrarlo.
     """
-    print(">>> Agente 4 (Executor): Ricevuta richiesta su /get-balance")
+    if order.side.lower() not in ['buy', 'sell']:
+        raise HTTPException(status_code=400, detail="Il campo 'side' deve essere 'Buy' o 'Sell'")
     
-    # Eseguiamo la funzione che contatta Bybit
-    balance_result = get_wallet_balance(target_coin="USDT")
+    result = place_order(
+        symbol=order.symbol,
+        side=order.side,
+        qty=order.qty,
+        reason=order.reason
+    )
     
-    # Controlliamo se l'operazione è andata a buon fine
-    if balance_result.get("status") == "success":
-        print(f">>> Agente 4 (Executor): Saldo recuperato con successo. Invio risposta a n8n.")
-        return jsonify(balance_result), 200
-    else:
-        # Se c'è stato un errore (es. chiavi API non impostate), lo comunichiamo
-        print(f">>> Agente 4 (Executor): Errore durante il recupero del saldo. Dettagli: {balance_result.get('message')}")
-        return jsonify(balance_result), 500
-
-# Aggiungeremo qui altri endpoint, come /execute-trade
-# @app.route('/execute-trade', methods=['POST'])
-# def execute_trade_endpoint():
-#     # ... logica per eseguire un ordine ...
-#     pass
-
-if __name__ == '__main__':
-    # Facciamo girare il server sulla porta 5004 per non fare a pugni con gli altri agenti
-    app.run(host='0.0.0.0', port=5004, debug=True)
+    if result["status"] == "error":
+        raise HTTPException(status_code=500, detail=result["message"])
+        
+    return result

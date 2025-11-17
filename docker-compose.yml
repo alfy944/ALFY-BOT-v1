@@ -1,40 +1,83 @@
-version: '3.8'
-
 services:
   n8n:
-    image: n8nio/n8n:latest
+    image: n8nio/n8n
+    container_name: n8n_workflow_engine
+    restart: always
     ports:
       - "5678:5678"
-    volumes:
-      - ./n8n_data:/home/node/.n8n
     environment:
       - GENERIC_TIMEZONE=Europe/Rome
-      # Aggiungi questa riga per disabilitare il controllo del cookie sicuro
-      - N8N_SECURE_COOKIE=false
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - trading-network
 
   technical-analyzer-agent:
-    build:
-      context: ./agents/01_technical_analyzer
-    ports:
-      - "8000:8000"
-
-  news-sentiment-agent:
-    build:
-      context: ./agents/02_news_sentiment
+    build: ./agents/01_technical_analyzer
+    container_name: technical-analyzer-agent
+    restart: always
     ports:
       - "8001:8000"
+    networks:
+      - trading-network
 
-  trade-guardian-agent:
-    build:
-      context: ./agents/03_trade_guardian
+  news-sentiment-agent:
+    build: ./agents/02_news_sentiment
+    container_name: news-sentiment-agent
+    restart: always
     ports:
       - "8002:8000"
+    environment:
+      - CRYPTOPANIC_API_KEY="a34f666b065e5f719d95b2eae0bd6e7a99cba69f"
+    networks:
+      - trading-network
 
-  bybit-executor:
-    build:
-      context: ./agents/04_bybit_executor
+  trade-guardian:
+    build: ./agents/03_trade_guardian
+    container_name: trade-guardian
+    restart: always
     ports:
       - "8003:8000"
+    networks:
+      - trading-network
+
+  bybit-executor:
+    build: ./agents/04_bybit_executor
+    container_name: bybit-executor
+    restart: always
+    ports:
+      - "8004:8000"
+    networks:
+      - trading-network
+  
+  db:
+    image: postgres:13-alpine
+    container_name: trading_db
+    restart: always
     environment:
-      - BYBIT_API_KEY=jGsvbhKNSrgmhLfCid
-      - BYBIT_API_SECRET=ulNflLWjs56xis1dr3GmZ8DC9TuoqBdMpJtc
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=trading_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - trading-network
+
+  dashboard:
+    build: ./dashboard
+    container_name: dashboard_ui
+    restart: always
+    ports:
+      - "8501:8501"
+    networks:
+      - trading-network
+
+volumes:
+  n8n_data:
+  db_data:
+
+networks:
+  trading-network:
+    driver: bridge

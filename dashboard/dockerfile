@@ -1,0 +1,20 @@
+# Usiamo un'immagine Python ufficiale e leggera
+FROM python:3.10-slim
+
+# Impostiamo la cartella di lavoro all'interno del container
+WORKDIR /app
+
+# Copiamo prima il file dei requisiti per sfruttare la cache di Docker
+COPY requirements.txt .
+
+# Installiamo le dipendenze Python necessarie per la dashboard
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copiamo il codice sorgente della nostra dashboard
+COPY app.py .
+
+# Esponiamo la porta standard di Streamlit
+EXPOSE 8501
+
+# Comando per avviare l'applicazione Streamlit quando il container parte
+CMD ["streamlit", "run", "app.py"]
