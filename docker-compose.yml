@@ -1,69 +1,72 @@
-services:
-  db:
-    image: postgres:13-alpine
-    container_name: trading_db
-    environment:
-      POSTGRES_USER: trading_user
-      POSTGRES_PASSWORD: your_strong_password_here
-      POSTGRES_DB: trading_data
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./db_init:/docker-entrypoint-initdb.d
-    ports:
-      - "5433:5432"
-    restart: always
-    networks:
-      - trading-net
+version: '3.8'
 
+services:
   n8n:
-    image: n8nio/n8n
+    image: n8nio/n8n:latest
     container_name: n8n
-    environment:
-      - N8N_SECURE_COOKIE=false
+    restart: always
     ports:
       - "5678:5678"
+    environment:
+      - N8N_HOST=${SUBDOMAIN}.${DOMAIN_NAME}
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - WEBHOOK_URL=https://${SUBDOMAIN}.${DOMAIN_NAME}/
+      - GENERIC_TIMEZONE=Europe/Rome
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=trading_db
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=trading_data
+      - DB_POSTGRESDB_USER=trading_user
+      - DB_POSTGRESDB_PASSWORD=your_strong_password_here
     volumes:
       - n8n_data:/home/node/.n8n
-    restart: always
+    depends_on:
+      - trading_db
     networks:
-      - trading-net
+      - trading-network
+
+  trading_db:
+    image: postgres:13
+    container_name: trading_db
+    restart: always
+    environment:
+      - POSTGRES_USER=trading_user
+      - POSTGRES_PASSWORD=your_strong_password_here
+      - POSTGRES_DB=trading_data
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - trading-network
 
   technical-analyzer-agent:
     build: ./agents/01_technical_analyzer
     container_name: technical-analyzer-agent
-    restart: always
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
     networks:
-      - trading-net
+      - trading-network
 
   news-sentiment-agent:
     build: ./agents/02_news_sentiment
     container_name: news-sentiment-agent
-    restart: always
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
     networks:
-      - trading-net
+      - trading-network
 
-  trade-guardian-agent:
-    build: ./agents/03_trade_guardian
-    container_name: trade-guardian-agent
-    restart: always
+  # --- NUOVO AGENTE AGGIUNTO QUI ---
+  fibonacci-cyclical-agent:
+    build: ./agents/03_fibonacci_cyclical_agent
+    container_name: fibonacci-cyclical-agent
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
     networks:
-      - trading-net
-
-  bybit-executor:
-    build: ./agents/04_bybit_executor
-    container_name: bybit-executor
-    env_file:
-      - ./.env
-    restart: always
-    depends_on:
-      - db
-    networks:
-      - trading-net
+      - trading-network
 
 volumes:
-  postgres_data:
   n8n_data:
+  postgres_data:
 
 networks:
-  trading-net:
+  trading-network:
     driver: bridge

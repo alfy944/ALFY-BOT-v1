@@ -4,7 +4,7 @@ import pandas as pd
 import pandas_ta as ta
 import ccxt.async_support as ccxt
 import logging
-from typing import Dict, List
+from typing import Dict, List, Any
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -13,15 +13,11 @@ class AnalysisRequest(BaseModel):
     symbol: str
     intervals: List[str]
 
-app = FastAPI()
-
-@app.get("/")
-async def read_root():
-    return {"status": "Technical Analyzer Agent is running"}
+app = FastAPI(title="Technical Analyzer Agent", version="1.0.0")
 
 async def get_technical_analysis(symbol: str, intervals: List[str]) -> Dict:
     exchange = ccxt.binance()
-    limit = 200 # Ottimizzato
+    limit = 200
     analysis_results = {}
 
     try:
@@ -33,8 +29,7 @@ async def get_technical_analysis(symbol: str, intervals: List[str]) -> Dict:
                 continue
 
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-
+            
             df.ta.rsi(length=14, append=True)
             df.ta.macd(fast=12, slow=26, signal=9, append=True)
             
@@ -47,6 +42,10 @@ async def get_technical_analysis(symbol: str, intervals: List[str]) -> Dict:
         return analysis_results
     finally:
         await exchange.close()
+
+@app.get("/")
+async def read_root():
+    return {"status": "Technical Analyzer Agent is running"}
 
 @app.post("/analyze")
 async def analyze_symbol(request: AnalysisRequest):
