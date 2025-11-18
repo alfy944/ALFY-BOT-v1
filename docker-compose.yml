@@ -1,27 +1,25 @@
-version: '3.8'
-
 services:
-  # --- SERVIZIO 1: IL DATABASE (LA MEMORIA) ---
   db:
     image: postgres:13-alpine
     container_name: trading_db
     environment:
       POSTGRES_USER: trading_user
-      POSTGRES_PASSWORD: your_strong_password_here # <-- RICORDA DI CAMBIARE QUESTA PASSWORD!
+      POSTGRES_PASSWORD: your_strong_password_here
       POSTGRES_DB: trading_data
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./db_init:/docker-entrypoint-initdb.d
     ports:
-      - "5433:5432" # Porta per connettersi al DB dal tuo Mac
+      - "5433:5432"
     restart: always
     networks:
       - trading-net
 
-  # --- SERVIZIO 2: IL MOTORE DEI WORKFLOW ---
   n8n:
     image: n8nio/n8n
     container_name: n8n
+    environment:
+      - N8N_SECURE_COOKIE=false
     ports:
       - "5678:5678"
     volumes:
@@ -30,18 +28,13 @@ services:
     networks:
       - trading-net
 
-  # --- SERVIZIO 3: L'ANALISTA TECNICO (IL CERVELLO) ---
   technical-analyzer-agent:
     build: ./agents/01_technical_analyzer
     container_name: technical-analyzer-agent
     restart: always
-    # Le porte esposte non sono necessarie per la comunicazione interna
-    # ports:
-    #   - "8001:8000"
     networks:
       - trading-net
 
-  # --- SERVIZIO 4: L'ANALISTA DI NEWS (GLI OCCHI) ---
   news-sentiment-agent:
     build: ./agents/02_news_sentiment
     container_name: news-sentiment-agent
@@ -49,7 +42,6 @@ services:
     networks:
       - trading-net
 
-  # --- SERVIZIO 5: IL GUARDIANO DEL RISCHIO ---
   trade-guardian-agent:
     build: ./agents/03_trade_guardian
     container_name: trade-guardian-agent
@@ -57,7 +49,6 @@ services:
     networks:
       - trading-net
 
-  # --- SERVIZIO 6: L'ESECUTORE (LE MANI) ---
   bybit-executor:
     build: ./agents/04_bybit_executor
     container_name: bybit-executor
@@ -69,12 +60,10 @@ services:
     networks:
       - trading-net
 
-# --- DEFINIZIONE DEI VOLUMI PER LA PERSISTENZA DEI DATI ---
 volumes:
   postgres_data:
   n8n_data:
 
-# --- DEFINIZIONE DELLA RETE DEDICATA PER LA COMUNICAZIONE ---
 networks:
   trading-net:
     driver: bridge
