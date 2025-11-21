@@ -99,7 +99,11 @@ services:
     build: ./orchestrator
     env_file: .env
     restart: always
+    environment:
+      - AUTH_SERVICE_URL=http://auth-service:8001
     depends_on:
+      auth-service:
+        condition: service_started
       technical-analyzer-agent:
         condition: service_healthy
       fibonacci-cyclical-agent:

@@ -376,6 +376,66 @@ async def get_decrypted_keys(
         "api_secret": decrypt_data(key.encrypted_api_secret)
     }
 
+@app.get("/active-users")
+async def get_active_users(db: Session = Depends(get_db)):
+    """Get all users with running bots (internal endpoint for orchestrator)"""
+    # Get all bot configs that are running
+    active_configs = db.query(BotConfig).filter(BotConfig.is_running == 1).all()
+    
+    result = []
+    for config in active_configs:
+        # Get user info
+        user = db.query(User).filter(User.id == config.user_id, User.is_active == 1).first()
+        if not user:
+            continue
+        
+        # Get exchange keys
+        exchange_keys = db.query(ExchangeKey).filter(
+            ExchangeKey.user_id == config.user_id,
+            ExchangeKey.is_active == 1
+        ).all()
+        
+        if not exchange_keys:
+            continue
+        
+        # Use first available exchange
+        exchange = exchange_keys[0]
+        
+        result.append({
+            "user_id": user.id,
+            "username": user.username,
+            "exchange": exchange.exchange_name,
+            "config": {
+                "symbols": config.symbols,
+                "qty_usdt": config.qty_usdt,
+                "leverage": config.leverage
+            }
+        })
+    
+    return result
+
+@app.get("/users/{user_id}/exchange-keys/{exchange_name}/decrypt")
+async def get_user_decrypted_keys(
+    user_id: int,
+    exchange_name: str,
+    db: Session = Depends(get_db)
+):
+    """Internal endpoint for orchestrator to get user's decrypted keys"""
+    # TODO: Add internal service authentication
+    key = db.query(ExchangeKey).filter(
+        ExchangeKey.user_id == user_id,
+        ExchangeKey.exchange_name == exchange_name,
+        ExchangeKey.is_active == 1
+    ).first()
+    
+    if not key:
+        raise HTTPException(status_code=404, detail="Exchange keys not found")
+    
+    return {
+        "api_key": decrypt_data(key.encrypted_api_key),
+        "api_secret": decrypt_data(key.encrypted_api_secret)
+    }
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)
