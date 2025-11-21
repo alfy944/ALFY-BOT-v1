@@ -35,7 +35,17 @@ if [ ! -f .env ]; then
     echo "🔐 Generating secure keys..."
     
     JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))" 2>/dev/null || openssl rand -base64 32)
-    ENCRYPTION_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" 2>/dev/null || echo "PLEASE_GENERATE_MANUALLY")
+    ENCRYPTION_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" 2>/dev/null || echo "")
+    INTERNAL_TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))" 2>/dev/null || openssl rand -base64 32)
+    
+    # Check if encryption key was generated
+    if [ -z "$ENCRYPTION_KEY" ]; then
+        echo "⚠️  Warning: Could not generate encryption key automatically."
+        echo "   You need to install cryptography package:"
+        echo "   pip3 install cryptography"
+        echo ""
+        ENCRYPTION_KEY="GENERATE_MANUALLY_WITH_PYTHON"
+    fi
     
     # Create .env file
     cat > .env << EOF
@@ -47,6 +57,9 @@ JWT_SECRET_KEY=$JWT_SECRET
 
 # Encryption Key
 ENCRYPTION_KEY=$ENCRYPTION_KEY
+
+# Internal Service Token (for service-to-service auth)
+INTERNAL_SERVICE_TOKEN=$INTERNAL_TOKEN
 
 # Database Configuration
 DATABASE_URL=postgresql://trading_user:trading_pass@postgres:5432/trading_db

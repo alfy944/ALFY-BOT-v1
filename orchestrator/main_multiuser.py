@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 # --- CONFIG ---
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8001")
+INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "")
 
 # --- URL DEGLI AGENTI ---
 URL_BRAIN = "http://master-ai-agent:8000/decide"
@@ -207,9 +208,8 @@ class MultiUserOrchestrator:
     def get_active_users(self) -> List[dict]:
         """Fetch active users with running bots from auth service"""
         try:
-            # This endpoint would need to be added to auth service
-            # For now, we'll use a workaround
-            response = requests.get(f"{AUTH_SERVICE_URL}/active-users", timeout=10)
+            headers = {"Authorization": f"Bearer {INTERNAL_SERVICE_TOKEN}"}
+            response = requests.get(f"{AUTH_SERVICE_URL}/active-users", headers=headers, timeout=10)
             response.raise_for_status()
             return response.json()
         except Exception as e:
@@ -222,10 +222,11 @@ class MultiUserOrchestrator:
             user_id = user_data['user_id']
             exchange_name = user_data.get('exchange', 'bybit')
             
-            # Get decrypted API keys from auth service
-            # This would require authentication token
+            # Get decrypted API keys from auth service with internal token
+            headers = {"Authorization": f"Bearer {INTERNAL_SERVICE_TOKEN}"}
             response = requests.get(
                 f"{AUTH_SERVICE_URL}/users/{user_id}/exchange-keys/{exchange_name}/decrypt",
+                headers=headers,
                 timeout=10
             )
             
@@ -271,7 +272,7 @@ class MultiUserOrchestrator:
                 self.sessions[user_id].qty_usdt = user_data['config'].get('qty_usdt', 50)
                 self.sessions[user_id].leverage = user_data['config'].get('leverage', 5)
         
-        # Remove inactive users
+        # Remove inactive users (sessions for users who stopped their bot)
         active_user_ids = [u['user_id'] for u in active_users]
         for user_id in list(self.sessions.keys()):
             if user_id not in active_user_ids:

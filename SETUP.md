@@ -18,6 +18,12 @@ python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
+#### Generate Internal Service Token
+
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
 ### 2. Configure Environment Variables
 
 1. Copy the example environment file:
@@ -28,6 +34,7 @@ cp .env.example .env
 2. Edit `.env` and replace the placeholder values:
    - `JWT_SECRET_KEY`: Use the JWT key generated above
    - `ENCRYPTION_KEY`: Use the encryption key generated above
+   - `INTERNAL_SERVICE_TOKEN`: Use the internal token generated above
    - Add your exchange API keys (optional, users can add their own)
    - Add your OpenAI API key
    - Add your CryptoPanic API key

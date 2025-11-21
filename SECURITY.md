@@ -36,6 +36,7 @@
 - [x] Input validation on all endpoints
 - [x] Error messages don't expose sensitive info
 - [x] HTTP-only secure in production (HTTPS recommended)
+- [x] Internal service authentication (token-based)
 - [x] Rate limiting possible (to be implemented in production)
 
 ### Mobile App Security
@@ -92,6 +93,7 @@
 ```bash
 JWT_SECRET_KEY=<generate-with-secrets.token_urlsafe-32>
 ENCRYPTION_KEY=<generate-with-Fernet.generate_key>
+INTERNAL_SERVICE_TOKEN=<generate-with-secrets.token_urlsafe-32>
 ```
 
 **Recommended:**
@@ -110,6 +112,11 @@ python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 **Encryption Key:**
 ```bash
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+**Internal Service Token:**
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
 **Strong Database Password:**

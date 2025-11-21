@@ -17,6 +17,7 @@ from cryptography.fernet import Fernet
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://trading_user:trading_pass@postgres:5432/trading_db")
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", secrets.token_urlsafe(32))
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", Fernet.generate_key().decode())
+INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", secrets.token_urlsafe(32))
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 
@@ -170,6 +171,18 @@ async def get_current_user(
     if user is None or not user.is_active:
         raise HTTPException(status_code=401, detail="User not found or inactive")
     return user
+
+async def verify_internal_token(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """Verify internal service token for service-to-service communication"""
+    token = credentials.credentials
+    if token != INTERNAL_SERVICE_TOKEN:
+        raise HTTPException(
+            status_code=401, 
+            detail="Invalid internal service token"
+        )
+    return True
 
 # --- API Endpoints ---
 @app.get("/")
@@ -377,7 +390,10 @@ async def get_decrypted_keys(
     }
 
 @app.get("/active-users")
-async def get_active_users(db: Session = Depends(get_db)):
+async def get_active_users(
+    verified: bool = Depends(verify_internal_token),
+    db: Session = Depends(get_db)
+):
     """Get all users with running bots (internal endpoint for orchestrator)"""
     # Get all bot configs that are running
     active_configs = db.query(BotConfig).filter(BotConfig.is_running == 1).all()
@@ -418,10 +434,10 @@ async def get_active_users(db: Session = Depends(get_db)):
 async def get_user_decrypted_keys(
     user_id: int,
     exchange_name: str,
+    verified: bool = Depends(verify_internal_token),
     db: Session = Depends(get_db)
 ):
     """Internal endpoint for orchestrator to get user's decrypted keys"""
-    # TODO: Add internal service authentication
     key = db.query(ExchangeKey).filter(
         ExchangeKey.user_id == user_id,
         ExchangeKey.exchange_name == exchange_name,

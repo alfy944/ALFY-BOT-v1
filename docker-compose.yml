@@ -25,6 +25,7 @@ services:
       - DATABASE_URL=postgresql://trading_user:trading_pass@postgres:5432/trading_db
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-secret-key-change-this}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-your-encryption-key-change-this}
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-your-internal-token-change-this}
     depends_on:
       postgres:
         condition: service_healthy
@@ -101,6 +102,7 @@ services:
     restart: always
     environment:
       - AUTH_SERVICE_URL=http://auth-service:8001
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-your-internal-token-change-this}
     depends_on:
       auth-service:
         condition: service_started
