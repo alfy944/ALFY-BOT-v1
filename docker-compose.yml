@@ -81,3 +81,14 @@ services:
         condition: service_healthy
       position-manager-agent:
         condition: service_healthy
+  news-sentiment-agent:
+    build: ./agents/06_news_sentiment_agent
+    ports:
+      - "8006:8000"
+    environment:
+      - CRYPTOPANIC_API_KEY=${CRYPTOPANIC_API_KEY}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

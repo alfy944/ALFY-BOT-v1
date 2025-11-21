@@ -19,6 +19,7 @@ URL_TECH = "http://technical-analyzer-agent:8000/analyze_multi_tf"
 URL_FIB = "http://fibonacci-cyclical-agent:8000/analyze_fibonacci"
 URL_GANN = "http://gann-analyzer-agent:8000/analyze_gann"
 URL_MGMT = "http://position-manager-agent:8000/manage"
+URL_NEWS = "http://news-sentiment-agent:8000/analyze_sentiment" # URL del nuovo agente
 
 session = HTTP(testnet=False, api_key=os.getenv("BYBIT_API_KEY"), api_secret=os.getenv("BYBIT_API_SECRET"))
 instrument_rules_cache = {}
@@ -47,7 +48,6 @@ def get_data(url, payload):
     return {}
 
 def execute_trade(setup, symbol):
-    # ... (Questa funzione rimane quasi identica, la copia per intero per sicurezza)
     if not setup:
         print(f"   -> ❌ Errore: setup nullo per {symbol}.")
         return
@@ -80,15 +80,12 @@ def execute_trade(setup, symbol):
 
         print(f"   -> 🚀 ESECUZIONE ORDINE: {side} {final_qty_str} {symbol} @ {entry} | SL: {sl} | TP: {tp}")
         
-        # --- MODIFICA CHIAVE: Gestione Errore Leva ---
         try:
             session.set_leverage(category="linear", symbol=symbol, buyLeverage=str(LEVERAGE), sellLeverage=str(LEVERAGE))
         except Exception as e:
-            # Se l'errore è 'leverage not modified', lo ignoriamo e andiamo avanti.
             if "110043" in str(e):
                 print(f"      - Info: leva per {symbol} già impostata a {LEVERAGE}x. Si procede.")
             else:
-                # Se è un altro errore, lo segnaliamo ma proviamo comunque a piazzare l'ordine.
                 print(f"      - Avviso durante impostazione leva: {e}")
 
         session.place_order(
@@ -101,16 +98,13 @@ def execute_trade(setup, symbol):
     except Exception as e:
         print(f"   -> ❌ Errore esecuzione ordine per {symbol}: {e}")
 
-# --- FUNZIONE JOB MIGLIORATA V4 ---
 def job():
     print(f"\n--- 🕒 {time.strftime('%Y-%m-%d %H:%M:%S')} | INIZIO CICLO DI SCANSIONE MERCATO ---")
     
-    # --- MODIFICA CHIAVE: Controllo Posizioni Aperte ---
     open_positions = []
     try:
         positions_response = session.get_positions(category="linear", settleCoin="USDT")
         if positions_response['retCode'] == 0 and 'list' in positions_response['result']:
-            # Creiamo una lista semplice con solo i simboli delle posizioni aperte (con size > 0)
             open_positions = [p['symbol'] for p in positions_response['result']['list'] if float(p.get('size', 0)) > 0]
             if open_positions:
                 print(f"ℹ️ Posizioni attualmente aperte: {', '.join(open_positions)}")
@@ -118,7 +112,6 @@ def job():
         print(f"   -> ⚠️ Impossibile recuperare le posizioni aperte: {e}")
 
     for symbol in SYMBOLS:
-        # --- MODIFICA CHIAVE: Salta l'analisi se c'è già una posizione ---
         if symbol in open_positions:
             print(f"\n--- 🚫 Analisi per {symbol} saltata: posizione già aperta. ---")
             continue
@@ -128,30 +121,36 @@ def job():
         tech = get_data(URL_TECH, {"symbol": symbol})
         fib = get_data(URL_FIB, {"crypto_symbol": symbol})
         gann = get_data(URL_GANN, {"symbol": symbol})
-        sentiment = {}
+        # === MODIFICA CHIAVE: Chiamata al News Agent ===
+        sentiment = get_data(URL_NEWS, {"symbol": symbol})
+        
         print(f"2. Consultazione Cervello AI per {symbol}...")
         payload = {"symbol": symbol, "tech_data": tech, "fib_data": fib, "gann_data": gann, "sentiment_data": sentiment}
         brain_resp = get_data(URL_BRAIN, payload)
+        
         if not brain_resp:
             print(f"   -> ⚠️ Il Cervello AI non ha risposto. Salto.")
             continue
+            
         decision = brain_resp.get("decision", "WAIT")
         print(f"   -> 🤖 Risposta AI per {symbol}: {decision}")
+        
         if brain_resp.get("logic_log"):
             for log_entry in brain_resp["logic_log"]: print(f"      - {log_entry}")
+            
         if decision in ["OPEN_LONG", "OPEN_SHORT"]:
             execute_trade(brain_resp, symbol)
     
     print("\n--- Analisi Completata ---")
     print("🛡️ Fase Finale: Gestione Posizioni Attive...")
-    # (La logica per il trailing stop qui andrebbe migliorata, ma per ora la lasciamo così)
+    
     mgmt_resp = get_data(URL_MGMT, {"positions": []})
     if mgmt_resp and len(mgmt_resp) > 0:
         print(f"   -> {len(mgmt_resp)} azioni di management ricevute.")
     else: print("   -> Nessuna azione di management richiesta.")
     print(f"--- ✅ CICLO DI SCANSIONE COMPLETATO ({time.strftime('%Y-%m-%d %H:%M:%S')}) ---")
 
-print("🚀 Orchestrator V4 (Position-Aware) avviato. Esecuzione primo ciclo...")
+print("🚀 Orchestrator V5 (News-Aware) avviato. Esecuzione primo ciclo...")
 job()
 schedule.every(15).minutes.do(job)
 print(f"🗓️ Prossima esecuzione schedulata tra 15 minuti. In attesa...")
