@@ -1,5 +1,5 @@
 {
-  "name": "Trading Agent System - Complete Workflow",
+  "name": "Trading Agent System - Updated Workflow (v2)",
   "nodes": [
     {
       "parameters": {
@@ -16,51 +16,42 @@
       "name": "Every 15 Minutes",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [
-        240,
-        300
-      ]
+      "position": [240, 300]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "http://trading-agent-system-technical-analyzer-agent-1:8000/analyze",
+        "url": "http://trading-agent-system-technical-analyzer-agent-1:8000/analyze_multi_tf",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"symbol\": \"BTCUSDT\"\n}",
         "options": {}
       },
       "id": "technical-analyzer",
-      "name": "1. Technical Analyzer",
+      "name": "1. Technical Analyzer (Multi-TF)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        540,
-        100
-      ]
+      "position": [540, 100]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "http://trading-agent-system-fibonacci-cyclical-agent-1:8000/analyze",
+        "url": "http://trading-agent-system-fibonacci-cyclical-agent-1:8000/analyze_fibonacci",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"symbol\": \"BTCUSDT\"\n}",
+        "jsonBody": "={\n  \"crypto_symbol\": \"BTCUSDT\"\n}",
         "options": {}
       },
       "id": "fibonacci-analyzer",
       "name": "2. Fibonacci Analyzer",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        540,
-        220
-      ]
+      "position": [540, 220]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "http://trading-agent-system-gann-analyzer-agent-1:8000/analyze",
+        "url": "http://trading-agent-system-gann-analyzer-agent-1:8000/analyze_gann",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"symbol\": \"BTCUSDT\"\n}",
@@ -70,48 +61,7 @@
       "name": "3. Gann Analyzer",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        540,
-        340
-      ]
-    },
-    {
-      "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "hours",
-              "hoursInterval": 1
-            }
-          ]
-        }
-      },
-      "id": "schedule-1hour",
-      "name": "Every Hour (CoinGecko)",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
-      "position": [
-        240,
-        500
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://trading-agent-system-coingecko-agent-1:8000/analyze",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"symbol\": \"BTCUSDT\"\n}",
-        "options": {}
-      },
-      "id": "coingecko-news",
-      "name": "4. CoinGecko News",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        540,
-        500
-      ]
+      "position": [540, 340]
     },
     {
       "parameters": {
@@ -122,41 +72,32 @@
       "name": "Merge All Analyses",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 2.1,
-      "position": [
-        840,
-        300
-      ]
+      "position": [840, 220]
     },
     {
       "parameters": {
-        "jsCode": "// Prepare data for Master AI Agent\nconst items = $input.all();\n\n// Find each analysis type\nconst technical = items.find(item => item.json.RSI !== undefined) || { json: {} };\nconst fibonacci = items.find(item => item.json.current_level !== undefined) || { json: {} };\nconst gann = items.find(item => item.json.trend !== undefined) || { json: {} };\nconst news = items.find(item => item.json.id !== undefined) || { json: {} };\n\n// Create payload for Master AI Agent\nconst payload = {\n  symbol: \"BTCUSDT\",\n  technical_analysis: technical.json,\n  fibonacci_analysis: fibonacci.json,\n  gann_analysis: gann.json,\n  news_sentiment: news.json,\n  portfolio_state: {\n    total_capital_eur: 10000.0,\n    available_capital_eur: 10000.0,\n    max_risk_per_trade_percent: 1.0\n  }\n};\n\nreturn [{ json: payload }];"
+        "jsCode": "// Prepare data for Master AI Agent (updated structure)\nconst items = $input.all();\n\n// Find each analysis type by endpoint characteristics\nconst tech = items.find(item => item.json.tf_1h !== undefined || item.json['1h'] !== undefined) || { json: {} };\nconst fibonacci = items.find(item => item.json.levels !== undefined || item.json.current_level !== undefined) || { json: {} };\nconst gann = items.find(item => item.json.angle !== undefined || item.json.trend !== undefined) || { json: {} };\n\n// Create payload for Master AI Agent with updated structure\nconst payload = {\n  symbol: \"BTCUSDT\",\n  tech_data: tech.json,\n  fib_data: fibonacci.json,\n  gann_data: gann.json,\n  sentiment_data: {}  // No sentiment agent in new version\n};\n\nreturn [{ json: payload }];"
       },
       "id": "prepare-data",
-      "name": "5. Prepare Data",
+      "name": "4. Prepare Data for AI",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1040,
-        300
-      ]
+      "position": [1040, 220]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "http://trading-agent-system-master-ai-agent-1:8000/decide_plan",
+        "url": "http://trading-agent-system-master-ai-agent-1:8000/decide",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ $json }}",
         "options": {}
       },
       "id": "master-ai",
-      "name": "6. Master AI Decision",
+      "name": "5. Master AI Decision",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        1240,
-        300
-      ]
+      "position": [1240, 220]
     },
     {
       "parameters": {
@@ -164,62 +105,50 @@
           "string": [
             {
               "value1": "={{ $json.decision }}",
-              "operation": "notEquals",
-              "value2": "HOLD"
+              "operation": "regex",
+              "value2": "OPEN_(LONG|SHORT)"
             }
           ]
         }
       },
       "id": "check-decision",
-      "name": "Is BUY or SELL?",
+      "name": "Should Open Position?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        1440,
-        300
-      ]
+      "position": [1440, 220]
     },
     {
       "parameters": {
-        "jsCode": "// Prepare order for execution\nconst decision = $input.item.json;\n\nconst orderPayload = {\n  decision: decision.decision,\n  symbol: \"BTCUSDT\",\n  position_size_eur: decision.position_size_eur || 0,\n  stop_loss_price: decision.stop_loss_price || null,\n  take_profit_price: decision.take_profit_price || null\n};\n\nreturn [{ json: orderPayload }];"
+        "jsCode": "// Execute trade based on AI decision\nconst decision = $input.item.json;\nconst setup = decision.trade_setup || {};\n\n// Prepare order data\nconst orderData = {\n  action: decision.decision,\n  symbol: decision.symbol || \"BTCUSDT\",\n  entry_price: setup.entry_price,\n  stop_loss: setup.stop_loss,\n  take_profit: setup.take_profit,\n  size_pct: setup.size_pct || 0.5,\n  message: `Opening position: ${decision.decision} at ${setup.entry_price}`\n};\n\nconsole.log('Trade execution:', orderData);\nreturn [{ json: orderData }];"
       },
-      "id": "prepare-order",
-      "name": "Prepare Order",
+      "id": "execute-trade",
+      "name": "6. Execute Trade",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1640,
-        200
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://trading-agent-system-order-executor-agent-1:8000/execute",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ $json }}",
-        "options": {}
-      },
-      "id": "order-executor",
-      "name": "7. Execute Order",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1840,
-        200
-      ]
+      "position": [1640, 120]
     },
     {
       "parameters": {},
       "id": "no-action",
-      "name": "No Action (HOLD)",
+      "name": "No Action (WAIT)",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [
-        1640,
-        400
-      ]
+      "position": [1640, 320]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://trading-agent-system-position-manager-agent-1:8000/manage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"positions\": []\n}",
+        "options": {}
+      },
+      "id": "position-manager",
+      "name": "7. Position Manager (Trailing)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1840, 220]
     }
   ],
   "pinData": {},
@@ -228,7 +157,7 @@
       "main": [
         [
           {
-            "node": "1. Technical Analyzer",
+            "node": "1. Technical Analyzer (Multi-TF)",
             "type": "main",
             "index": 0
           },
@@ -245,18 +174,7 @@
         ]
       ]
     },
-    "Every Hour (CoinGecko)": {
-      "main": [
-        [
-          {
-            "node": "4. CoinGecko News",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "1. Technical Analyzer": {
+    "1. Technical Analyzer (Multi-TF)": {
       "main": [
         [
           {
@@ -289,73 +207,73 @@
         ]
       ]
     },
-    "4. CoinGecko News": {
-      "main": [
-        [
-          {
-            "node": "Merge All Analyses",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Merge All Analyses": {
       "main": [
         [
           {
-            "node": "5. Prepare Data",
+            "node": "4. Prepare Data for AI",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "5. Prepare Data": {
+    "4. Prepare Data for AI": {
       "main": [
         [
           {
-            "node": "6. Master AI Decision",
+            "node": "5. Master AI Decision",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "6. Master AI Decision": {
+    "5. Master AI Decision": {
       "main": [
         [
           {
-            "node": "Is BUY or SELL?",
+            "node": "Should Open Position?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Is BUY or SELL?": {
+    "Should Open Position?": {
       "main": [
         [
           {
-            "node": "Prepare Order",
+            "node": "6. Execute Trade",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "No Action (HOLD)",
+            "node": "No Action (WAIT)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Prepare Order": {
+    "6. Execute Trade": {
       "main": [
         [
           {
-            "node": "7. Execute Order",
+            "node": "7. Position Manager (Trailing)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Action (WAIT)": {
+      "main": [
+        [
+          {
+            "node": "7. Position Manager (Trailing)",
             "type": "main",
             "index": 0
           }
