@@ -81,7 +81,7 @@ def calculate_atr_stop(symbol: str, side: str, entry_price: float, interval: str
         # Scarichiamo le ultime 30 candele (bastano per ATR 14)
         resp = session.get_kline(category="linear", symbol=symbol, interval=interval, limit=30)
         if resp['retCode'] != 0: 
-            print(f"⚠️ Errore kline per {symbol}: {resp}")
+            print(f"⚠️ Errore kline per {symbol}: {resp.get('retCode')} - {resp.get('retMsg')}")
             return 0.0
         
         df = pd.DataFrame(resp['result']['list'], columns=['t','o','h','l','c','v','to'])
@@ -130,7 +130,7 @@ def get_open_positions():
         resp = session.get_positions(category="linear", settleCoin="USDT")
         
         if resp['retCode'] != 0:
-            print(f"❌ Errore API Bybit in get_positions: {resp}")
+            print(f"❌ Errore API Bybit in get_positions: {resp.get('retCode')} - {resp.get('retMsg')}")
             return {"open_positions": [], "error": resp.get('retMsg')}
 
         open_positions = []
@@ -196,7 +196,6 @@ def manage_positions(request: ManageRequest):
         
         if pos.side == "Buy":
             # Aggiorna SOLO se il nuovo SL è più alto del vecchio (Trail UP)
-            # E se siamo in profitto o break-even (opzionale, ma consigliato)
             if new_sl > pos.stop_loss:
                 # Filtro Anti-Spam: Aggiorna solo se la differenza è > 5 tick
                 if (new_sl - pos.stop_loss) > (tick_size * 5):
@@ -226,7 +225,7 @@ def manage_positions(request: ManageRequest):
                         message=f"ATR Trailing: SL moved to {new_sl}"
                     ))
                 else:
-                    print(f"⚠️ Errore Bybit update SL: {res}")
+                    print(f"⚠️ Errore Bybit update SL: {res.get('retCode')} - {res.get('retMsg')}")
             except Exception as e:
                 print(f"❌ Error updating SL on Bybit: {e}")
 
