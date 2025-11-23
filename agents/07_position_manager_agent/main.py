@@ -9,7 +9,7 @@ from pybit.unified_trading import HTTP
 from decimal import Decimal, ROUND_DOWN
 import uvicorn
 
-app = FastAPI(title="Position Manager (ATR Trailing)")
+app = FastAPI(title="Position Manager (Fixed & Debugged)")
 
 # --- ABILITAZIONE CORS ---
 app.add_middleware(
@@ -25,6 +25,7 @@ def health_check():
     return {"status": "ok"}
 
 # --- CONFIGURAZIONE ---
+# IMPOSTATO FISSO SU FALSE COME RICHIESTO (SOLDI REALI)
 session = HTTP(
     testnet=False, 
     api_key=os.getenv("BYBIT_API_KEY"), 
@@ -79,7 +80,9 @@ def calculate_atr_stop(symbol: str, side: str, entry_price: float, interval: str
     try:
         # Scarichiamo le ultime 30 candele (bastano per ATR 14)
         resp = session.get_kline(category="linear", symbol=symbol, interval=interval, limit=30)
-        if resp['retCode'] != 0: return 0.0
+        if resp['retCode'] != 0: 
+            print(f"⚠️ Errore kline per {symbol}: {resp}")
+            return 0.0
         
         df = pd.DataFrame(resp['result']['list'], columns=['t','o','h','l','c','v','to'])
         df = df.iloc[::-1].reset_index(drop=True)
@@ -102,19 +105,19 @@ def calculate_atr_stop(symbol: str, side: str, entry_price: float, interval: str
         # Moltiplicatore ATR (2.5 è standard per swing trading)
         multiplier = 2.5
         
+        current_price = df['c'].iloc[-1]
+        
         if side == "Buy":
             # Per i Long, lo stop sale: Prezzo Corrente - (ATR * Mult)
-            current_price = df['c'].iloc[-1]
             stop_price = current_price - (current_atr * multiplier)
         else:
             # Per gli Short, lo stop scende: Prezzo Corrente + (ATR * Mult)
-            current_price = df['c'].iloc[-1]
             stop_price = current_price + (current_atr * multiplier)
             
         return stop_price
         
     except Exception as e:
-        print(f"ATR Calc Error for {symbol}: {e}")
+        print(f"❌ ATR Calc Error for {symbol}: {e}")
         return 0.0
 
 # --- ENDPOINTS ---
@@ -122,16 +125,29 @@ def calculate_atr_stop(symbol: str, side: str, entry_price: float, interval: str
 @app.get("/get_open_positions")
 def get_open_positions():
     """Restituisce una lista dei simboli con posizioni aperte su Bybit"""
+    print("🔍 Richiesta get_open_positions ricevuta...")
     try:
         resp = session.get_positions(category="linear", settleCoin="USDT")
+        
+        if resp['retCode'] != 0:
+            print(f"❌ Errore API Bybit in get_positions: {resp}")
+            return {"open_positions": [], "error": resp.get('retMsg')}
+
         open_positions = []
-        if resp['retCode'] == 0:
-            for p in resp['result']['list']:
-                if float(p['size']) > 0:
-                    open_positions.append(p['symbol'])
+        raw_list = resp.get('result', {}).get('list', [])
+        
+        for p in raw_list:
+            # Convertiamo size in float per sicurezza
+            if float(p.get('size', 0)) > 0:
+                print(f"   ✅ Trovata posizione: {p['symbol']} (Size: {p['size']})")
+                open_positions.append(p['symbol'])
+        
+        if not open_positions:
+            print("   ℹ️ Nessuna posizione aperta trovata.")
+            
         return {"open_positions": open_positions}
     except Exception as e:
-        print(f"Error getting positions: {e}")
+        print(f"❌ Eccezione in get_open_positions: {e}")
         return {"open_positions": []}
 
 @app.post("/manage", response_model=List[Action])
@@ -141,19 +157,22 @@ def manage_positions(request: ManageRequest):
     
     # 1. Se la richiesta è vuota, scarichiamo le posizioni reali da Bybit
     if not request.positions:
+        print("🛡️ Manage request vuota: scarico posizioni da Bybit...")
         try:
             resp = session.get_positions(category="linear", settleCoin="USDT")
             if resp['retCode'] == 0:
                 for p in resp['result']['list']:
-                    if float(p['size']) > 0:
+                    if float(p.get('size', 0)) > 0:
                         positions_to_check.append(Position(
                             symbol=p['symbol'],
                             side=p['side'], # "Buy" o "Sell"
                             entry_price=float(p['avgPrice']),
-                            stop_loss=float(p['stopLoss']) if p['stopLoss'] != "" else 0.0
+                            stop_loss=float(p['stopLoss']) if p.get('stopLoss') and p['stopLoss'] != "" else 0.0
                         ))
+            else:
+                print(f"⚠️ Errore Bybit durante manage: {resp}")
         except Exception as e:
-            print(f"Bybit Positions Error: {e}")
+            print(f"❌ Bybit Positions Error in manage: {e}")
             return []
     else:
         positions_to_check = request.positions
@@ -165,7 +184,9 @@ def manage_positions(request: ManageRequest):
         # Calcolo nuovo SL ideale basato su ATR
         potential_sl = calculate_atr_stop(pos.symbol, pos.side, pos.entry_price)
         
-        if potential_sl == 0: continue # Errore calcolo ATR
+        if potential_sl == 0: 
+            print(f"⚠️ ATR nullo per {pos.symbol}, salto.")
+            continue 
         
         # Arrotondamento al Tick Size (CRUCIALE)
         tick_size = get_tick_size(pos.symbol)
@@ -175,6 +196,7 @@ def manage_positions(request: ManageRequest):
         
         if pos.side == "Buy":
             # Aggiorna SOLO se il nuovo SL è più alto del vecchio (Trail UP)
+            # E se siamo in profitto o break-even (opzionale, ma consigliato)
             if new_sl > pos.stop_loss:
                 # Filtro Anti-Spam: Aggiorna solo se la differenza è > 5 tick
                 if (new_sl - pos.stop_loss) > (tick_size * 5):
@@ -182,28 +204,31 @@ def manage_positions(request: ManageRequest):
                     
         elif pos.side == "Sell":
             # Aggiorna SOLO se il nuovo SL è più basso del vecchio (Trail DOWN)
-            # O se non c'era stop loss (0)
             if pos.stop_loss == 0 or new_sl < pos.stop_loss:
                 if pos.stop_loss == 0 or (pos.stop_loss - new_sl) > (tick_size * 5):
                     should_update = True
         
         if should_update:
-            print(f"Updating SL for {pos.symbol} to {new_sl}")
+            print(f"🚀 Updating SL for {pos.symbol} from {pos.stop_loss} to {new_sl}")
             try:
                 # Eseguiamo l'aggiornamento su Bybit
-                session.set_trading_stop(
+                res = session.set_trading_stop(
                     category="linear",
                     symbol=pos.symbol,
                     stopLoss=str(new_sl),
                     positionIdx=0
                 )
-                actions.append(Action(
-                    symbol=pos.symbol,
-                    new_stop_loss=new_sl,
-                    message=f"ATR Trailing: SL moved to {new_sl}"
-                ))
+                if res['retCode'] == 0:
+                    print(f"✅ SL aggiornato con successo per {pos.symbol}")
+                    actions.append(Action(
+                        symbol=pos.symbol,
+                        new_stop_loss=new_sl,
+                        message=f"ATR Trailing: SL moved to {new_sl}"
+                    ))
+                else:
+                    print(f"⚠️ Errore Bybit update SL: {res}")
             except Exception as e:
-                print(f"Error updating SL on Bybit: {e}")
+                print(f"❌ Error updating SL on Bybit: {e}")
 
     return actions
 
