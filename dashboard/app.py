@@ -1,152 +1,78 @@
-import streamlit as st
-import pandas as pd
-import json
 import os
-import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime
+import requests
+from fastapi import FastAPI, Request, Form, Query
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+import uvicorn
 
-# CONFIGURAZIONE PAGINA
-st.set_page_config(
-    page_title="AI Trading Control Room",
-    page_icon="🦅",
-    layout="wide"
-)
+app = FastAPI(title="Mitragliere Dashboard Pro")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
-# PERCORSI DATI CONDIVISI
-DATA_DIR = "/app/data"
-CONFIG_FILE = f"{DATA_DIR}/config.json"
-LOGS_FILE = f"{DATA_DIR}/logs.json"
-ACTIONS_FILE = f"{DATA_DIR}/actions.json"
-EQUITY_FILE = f"{DATA_DIR}/equity.json"
+POSITION_AGENT = "http://position-manager-agent:8000"
+MASTER_AI_AGENT = "http://master-ai-agent:8000"
 
-# --- FUNZIONI DI UTILITÀ ---
-def load_data(file_path, default=None):
-    """Carica un file JSON in modo sicuro"""
-    if default is None: default = []
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, 'r') as f: return json.load(f)
-        except: pass
-    return default
+def get_wallet_data():
+    try:
+        return requests.get(f"{POSITION_AGENT}/get_wallet_balance", timeout=3).json()
+    except: return {"equity": 0, "available": 0, "pnl": 0, "error": "Conn Error"}
 
-def save_config(config):
-    """Salva la configurazione su file"""
-    with open(CONFIG_FILE, 'w') as f: json.dump(config, f, indent=4)
+def get_positions_data():
+    try:
+        return requests.get(f"{POSITION_AGENT}/get_open_positions", timeout=3).json().get("details", [])
+    except: return []
 
-# Carica configurazione o usa default
-default_conf = {"risk_per_trade": 1.0, "strategy": "intraday", "active": True, "initial_budget": 1000.0}
-config = load_data(CONFIG_FILE, default_conf)
+def get_ai_config():
+    try:
+        return requests.get(f"{MASTER_AI_AGENT}/config", timeout=3).json()
+    except: return {"mode": "calm", "risk_scale": 10, "max_leverage": 3}
 
-# --- SIDEBAR (LA TUA PLANCIA DI COMANDO) ---
-st.sidebar.title("🎛️ Control Room")
+def set_ai_config(data):
+    try:
+        requests.post(f"{MASTER_AI_AGENT}/config", json=data, timeout=3)
+        return True
+    except: return False
 
-# 1. Interruttore Generale
-st.sidebar.subheader("Stato Sistema")
-active = st.sidebar.toggle("SYSTEM ACTIVE", value=config.get("active", True))
-if active != config.get("active"):
-    config["active"] = active
-    save_config(config)
-    st.rerun()
+def get_equity_history(period="all"):
+    try:
+        return requests.get(f"{POSITION_AGENT}/get_history", params={"period": period}, timeout=3).json()
+    except: return []
 
-st.sidebar.divider()
+# --- ROUTES ---
 
-# 2. Strategia
-st.sidebar.subheader("Strategia")
-strategy = st.sidebar.selectbox(
-    "Modalità Operativa",
-    ["intraday", "swing"],
-    index=0 if config.get("strategy") == "intraday" else 1,
-    help="Intraday: Priorità grafico 15m. Swing: Priorità grafico 4h."
-)
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    return templates.TemplateResponse("dashboard.html", {"request": request})
 
-# 3. Gestione Rischio
-st.sidebar.subheader("Gestione Rischio")
-risk = st.sidebar.slider(
-    "Rischio per Trade (%)", 
-    min_value=0.5, max_value=5.0, 
-    value=float(config.get("risk_per_trade", 1.0)),
-    step=0.5
-)
+@app.get("/ui/balance", response_class=HTMLResponse)
+async def ui_balance(request: Request):
+    return templates.TemplateResponse("partials/balance_panel.html", {"request": request, "wallet": get_wallet_data()})
 
-# 4. Budget (Visuale)
-budget = st.sidebar.number_input("Budget Iniziale ($)", value=float(config.get("initial_budget", 1000.0)))
+@app.get("/ui/open-positions", response_class=HTMLResponse)
+async def ui_open_positions(request: Request):
+    return templates.TemplateResponse("partials/open_positions_table.html", {"request": request, "positions": get_positions_data()})
 
-# Pulsante SALVA
-if st.sidebar.button("✅ APPLICA MODIFICHE"):
-    config["strategy"] = strategy
-    config["risk_per_trade"] = risk
-    config["initial_budget"] = budget
-    save_config(config)
-    st.sidebar.success("Configurazione salvata! L'AI la userà al prossimo ciclo.")
+@app.get("/ui/config", response_class=HTMLResponse)
+async def ui_config_get(request: Request):
+    return templates.TemplateResponse("partials/config_form.html", {"request": request, "config": get_ai_config(), "saved": False})
 
-# --- PAGINA PRINCIPALE ---
-st.title("🦅 AI Trading Agent - Dashboard")
+@app.post("/ui/config", response_class=HTMLResponse)
+async def ui_config_post(request: Request, mode: str = Form(...), risk_scale: int = Form(...), max_leverage: int = Form(...)):
+    new_conf = {"mode": mode, "risk_scale": risk_scale, "max_leverage": max_leverage}
+    set_ai_config(new_conf)
+    # Restituisce il form con il flag 'saved=True' per mostrare il messaggio
+    return templates.TemplateResponse("partials/config_form.html", {"request": request, "config": new_conf, "saved": True})
 
-# KPI IN ALTO
-equity_data = load_data(EQUITY_FILE)
-# Se abbiamo dati reali usiamo l'ultimo, altrimenti il budget iniziale
-current_equity = equity_data[-1]['equity'] if equity_data else budget
-pnl = current_equity - budget
-pnl_pct = (pnl / budget) * 100 if budget > 0 else 0
-
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Equity Attuale", f"${current_equity:,.2f}", f"{pnl_pct:.2f}%")
-col2.metric("Budget Iniziale", f"${budget:,.2f}")
-col3.metric("Strategia Attiva", strategy.upper())
-col4.metric("Rischio Rischio", f"{risk}% / trade")
-
-st.divider()
-
-# SEZIONE 1: GRAFICO EQUITY
-st.subheader("📈 Curva dei Profitti")
-if equity_data:
-    df_eq = pd.DataFrame(equity_data)
-    df_eq['timestamp'] = pd.to_datetime(df_eq['timestamp'])
+@app.get("/ui/chart", response_class=HTMLResponse)
+async def ui_chart(request: Request, period: str = Query("all")):
+    data = get_equity_history(period)
+    # Prepara i dati per Chart.js
+    labels = [d['date'].split(" ")[1] if period == "day" else d['date'] for d in data]
+    values = [d['equity'] for d in data]
     
-    # Grafico interattivo
-    fig = px.line(df_eq, x='timestamp', y='equity', title="Equity vs Tempo", markers=True)
-    fig.add_hline(y=budget, line_dash="dash", line_color="red", annotation_text="Budget Iniziale")
-    fig.update_layout(xaxis_title="Orario", yaxis_title="Capitale ($)")
-    st.plotly_chart(fig, use_container_width=True)
-else:
-    st.info("⏳ In attesa del primo dato sul saldo (max 15 min)...")
+    return templates.TemplateResponse("partials/equity_chart.html", {
+        "request": request, "labels": labels, "values": values
+    })
 
-# SEZIONE 2: TABELLA DECISIONI AI
-col_left, col_right = st.columns(2)
-
-with col_left:
-    st.subheader("🧠 Ultime Analisi AI")
-    logs = load_data(LOGS_FILE)
-    
-    if logs:
-        df_logs = pd.DataFrame(logs)
-        # Ordina dal più recente
-        df_logs = df_logs.sort_values('timestamp', ascending=False).head(20)
-        
-        for idx, row in df_logs.iterrows():
-            # Colore in base alla decisione
-            emoji = "🟡"
-            if row['decision'] == "OPEN_LONG": emoji = "🟢"
-            elif row['decision'] == "OPEN_SHORT": emoji = "🔴"
-            
-            with st.expander(f"{emoji} {row['timestamp']} | {row['symbol']} | {row['decision']}"):
-                st.markdown(f"**Strategia usata:** `{row.get('strategy_used', 'N/A')}`")
-                st.markdown(f"**Analisi:** {row['reason']}")
-    else:
-        st.info("Nessuna analisi salvata ancora. Attendi il prossimo ciclo.")
-
-# SEZIONE 3: AZIONI ESEGUITE (Trailing Stop)
-with col_right:
-    st.subheader("🛡️ Log Operativo (Trailing Stop)")
-    actions = load_data(ACTIONS_FILE)
-    
-    if actions:
-        df_actions = pd.DataFrame(actions).sort_values('timestamp', ascending=False).head(20)
-        st.dataframe(
-            df_actions[['timestamp', 'symbol', 'details']], 
-            use_container_width=True,
-            hide_index=True
-        )
-    else:
-        st.info("Nessun movimento di Stop Loss recente.")
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8501)

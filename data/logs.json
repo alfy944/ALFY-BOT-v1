@@ -243,5 +243,285 @@
         "decision": "WAIT",
         "reason": "Error: Error code: 401 - {'error': {'message': 'Authentication Fails, Your api key: ****RH0A is invalid', 'type': 'authentication_error', 'param': None, 'code': 'invalid_request_error'}}",
         "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:29:15",
+        "symbol": "ETHUSDT",
+        "decision": "WAIT",
+        "reason": "Error: Error code: 401 - {'error': {'message': 'Authentication Fails, Your api key: ****RH0A is invalid', 'type': 'authentication_error', 'param': None, 'code': 'invalid_request_error'}}",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:29:15",
+        "symbol": "SOLUSDT",
+        "decision": "WAIT",
+        "reason": "Error: Error code: 401 - {'error': {'message': 'Authentication Fails, Your api key: ****RH0A is invalid', 'type': 'authentication_error', 'param': None, 'code': 'invalid_request_error'}}",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:29:15",
+        "symbol": "XRPUSDT",
+        "decision": "WAIT",
+        "reason": "Error: Error code: 401 - {'error': {'message': 'Authentication Fails, Your api key: ****RH0A is invalid', 'type': 'authentication_error', 'param': None, 'code': 'invalid_request_error'}}",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:29:15",
+        "symbol": "ADAUSDT",
+        "decision": "WAIT",
+        "reason": "Error: Error code: 401 - {'error': {'message': 'Authentication Fails, Your api key: ****RH0A is invalid', 'type': 'authentication_error', 'param': None, 'code': 'invalid_request_error'}}",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:29:15",
+        "symbol": "BNBUSDT",
+        "decision": "WAIT",
+        "reason": "Error: Error code: 401 - {'error': {'message': 'Authentication Fails, Your api key: ****RH0A is invalid', 'type': 'authentication_error', 'param': None, 'code': 'invalid_request_error'}}",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:29:15",
+        "symbol": "LTCUSDT",
+        "decision": "WAIT",
+        "reason": "Error: Error code: 401 - {'error': {'message': 'Authentication Fails, Your api key: ****RH0A is invalid', 'type': 'authentication_error', 'param': None, 'code': 'invalid_request_error'}}",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:29:15",
+        "symbol": "DOTUSDT",
+        "decision": "WAIT",
+        "reason": "Error: Error code: 401 - {'error': {'message': 'Authentication Fails, Your api key: ****RH0A is invalid', 'type': 'authentication_error', 'param': None, 'code': 'invalid_request_error'}}",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:36:04",
+        "symbol": "ETHUSDT",
+        "decision": "WAIT",
+        "reason": "Error: Error code: 401 - {'error': {'message': 'Authentication Fails, Your api key: ****RH0A is invalid', 'type': 'authentication_error', 'param': None, 'code': 'invalid_request_error'}}",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:37:02",
+        "symbol": "ETHUSDT",
+        "decision": "WAIT",
+        "reason": "15m RSI indicates slight bullish momentum but is not in overbought territory, suggesting potential for further upside. | 15m MACD line is above the signal line, indicating bullish momentum, but the cross status is neutral, suggesting caution. | 4H RSI is below 50, indicating bearish momentum on a higher timeframe, which could limit the upside potential of any intraday bullish moves. | 4H MACD histogram is positive, suggesting some bullish momentum, but the overall trend on the 4H chart is bearish. | The discrepancy between the 15m bullish signals and the 4H bearish trend suggests a lack of clear direction, making it prudent to wait for more definitive signals.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:37:02",
+        "symbol": "SOLUSDT",
+        "decision": "WAIT",
+        "reason": "15m RSI is slightly bullish but not strongly indicating a buy signal. | 15m MACD line is positive but the histogram is negative, indicating mixed signals. | 4H trend bias is bearish, conflicting with the 15m bullish bias. | Fibonacci levels indicate a bearish bias with current price not in the golden pocket, suggesting potential for further downside. | GANN analysis shows a weak reversal, not strong enough for a clear entry signal.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:37:02",
+        "symbol": "XRPUSDT",
+        "decision": "WAIT",
+        "reason": "15m RSI is moderately bullish, indicating potential for further upside. | 15m MACD line is slightly above the signal line but with a negative histogram, suggesting mixed signals. | 4H RSI shows slight bullish momentum but overall neutral. | 4H MACD histogram is positive, indicating a potential shift towards bullish momentum, but the line is below 0, presenting conflicting signals. | Fibonacci levels indicate current price is between major support and resistance, without clear direction. | GANN analysis suggests a weak reversal, indicating uncertainty. | Given the mixed signals from both short-term and medium-term indicators, a clear directional bias cannot be established.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:37:02",
+        "symbol": "ADAUSDT",
+        "decision": "WAIT",
+        "reason": "15m signals show bullish trend with RSI and MACD indicating strength but no clear MACD cross. | 4H signals indicate a bearish trend with RSI below 50 and price below both SMA 50 and SMA 200. | Fibonacci and GANN analysis show bearish bias and weak reversal, suggesting uncertainty in immediate direction. | Conflicting signals between 15m and 4H timeframes suggest a lack of clear direction, advising a wait strategy.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:37:02",
+        "symbol": "BNBUSDT",
+        "decision": "WAIT",
+        "reason": "15m signals show bullish trend with RSI above 60 and price above SMA50 and SMA200, indicating potential upward momentum. | 4H signals indicate a bearish bias with price below SMA50 and SMA200, and RSI in a neutral zone, suggesting overall bearish sentiment. | Fibonacci levels show current price between nearest support and resistance, without clear direction. | GANN analysis indicates a weak correction phase with current price approaching resistance level, suggesting potential for reversal. | Conflicting signals between 15m bullish indicators and 4H bearish trend, alongside neutral Fibonacci and GANN analysis, lead to a decision to wait for clearer market direction.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:37:02",
+        "symbol": "LTCUSDT",
+        "decision": "WAIT",
+        "reason": "15m signals show bullish trend with RSI rising and price above SMA50 and SMA200. | 4H signals indicate bearish trend with price significantly below SMA50 and SMA200, despite RSI and MACD showing potential for reversal. | Fibonacci indicates current price in golden pocket, suggesting potential support but overall bearish bias. | GANN analysis suggests a weak reversal, not providing a strong enough signal for entry. | Conflicting signals between short-term bullish and medium-term bearish trends suggest a higher risk of entering a trade now.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:37:02",
+        "symbol": "DOTUSDT",
+        "decision": "WAIT",
+        "reason": "15m RSI is slightly above neutral, indicating a lack of strong momentum. | 15m MACD line is negative but histogram is positive, showing mixed signals. | 4H RSI is significantly low, suggesting oversold conditions but not enough for a bullish reversal confirmation. | Both 15m and 4H trend biases are bearish, but without clear bullish reversal signals, entering a trade is risky. | Fibonacci and GANN analysis indicate bearish bias but no immediate strong reversal signals.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:49:13",
+        "symbol": "ETHUSDT",
+        "decision": "WAIT",
+        "reason": "15m RSI is neutral, slightly above 50 indicating mild bullish momentum but not strong enough for a clear entry signal. | 15m MACD line is positive and the histogram is positive, indicating some bullish momentum, but the cross status is neutral, suggesting the momentum might not be strong enough for a clear direction. | 4H RSI shows a slight bearish bias, which conflicts with the 15m bullish signals. | 4H MACD histogram is positive, indicating some bullish momentum on a larger time frame, but the overall trend bias is bearish. | The Fibonacci and GANN analysis indicate a bearish bias and weak correction, suggesting potential resistance ahead. | Given the conflicting signals between the 15m and 4H charts, and the bearish bias from Fibonacci and GANN analysis, it's prudent to wait for clearer signals.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:49:13",
+        "symbol": "SOLUSDT",
+        "decision": "WAIT",
+        "reason": "15m RSI is neutral, slightly above 50 indicating a mild bullish momentum but not strong. | 15m MACD line is above 0 but histogram is negative, indicating a potential loss in bullish momentum. | 4H RSI and MACD indicate a neutral to bearish outlook, conflicting with 15m signals. | Fibonacci levels show current price is not near key support or resistance, suggesting lack of clear directional bias. | GANN analysis indicates a weak reversal, not providing a strong enough signal for a confident trade.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:49:13",
+        "symbol": "XRPUSDT",
+        "decision": "WAIT",
+        "reason": "15m RSI is slightly bullish but not strongly indicating a move. | 15m MACD histogram is negative, suggesting bearish momentum is not completely over. | 4H RSI shows slight improvement but overall trend bias is bearish. | Fibonacci levels indicate current price is below nearest resistance, suggesting bearish bias. | GANN analysis indicates a weak reversal, not strong enough for a clear direction. | Conflicting signals between 15m bullish bias and 4H bearish trend, alongside mixed signals from Fibonacci and GANN analysis.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:49:13",
+        "symbol": "ADAUSDT",
+        "decision": "WAIT",
+        "reason": "15m RSI is neutral, slightly above 50 indicating mild bullish momentum but not strong enough for a clear entry signal. | 15m MACD line is positive with a neutral cross status, indicating a lack of clear momentum direction. | 4H RSI shows bearish momentum which conflicts with the 15m bullish bias. | 4H MACD indicates bearish momentum with a negative line but a neutral cross status, adding to the conflicting signals. | The presence of conflicting signals between the 15m and 4H timeframes suggests a lack of clear market direction, making it prudent to wait for more definitive signals.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:49:13",
+        "symbol": "BNBUSDT",
+        "decision": "WAIT",
+        "reason": "15m RSI is moderately bullish but declining from previous, indicating potential weakening of momentum. | 15m MACD line is positive, but with neutral cross status, suggesting a lack of clear direction. | 4H RSI indicates a bearish bias, conflicting with 15m signals. | 4H MACD shows a negative line but positive histogram, indicating potential for reversal but still under bearish pressure. | Fibonacci levels show current price between nearest support and resistance, without clear direction. | GANN analysis indicates a weak correction, suggesting uncertainty. | Mixed signals across different indicators and time frames suggest a lack of clear market direction.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:49:13",
+        "symbol": "LTCUSDT",
+        "decision": "WAIT",
+        "reason": "15m signals show a BULLISH trend bias with RSI in neutral territory and MACD line positive. | 4H signals indicate a BEARISH trend bias with RSI below 40 and MACD line negative. | Fibonacci analysis shows price in the golden pocket, suggesting potential support but overall bearish bias. | GANN analysis indicates a weak reversal, not providing a strong enough signal for entry. | Conflicting signals between 15m and 4H timeframes suggest a WAIT approach until clearer trend alignment.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 22:49:13",
+        "symbol": "DOTUSDT",
+        "decision": "WAIT",
+        "reason": "15m RSI is neutral, indicating no strong momentum. | 15m MACD line is slightly below the signal line but with a positive histogram, indicating mixed signals. | 4H RSI indicates oversold conditions, suggesting potential for a reversal but not confirmed by other indicators. | Both 15m and 4H trend biases are bearish, suggesting caution for long positions. | Lack of clear bullish signals on the 15m timeframe as per intraday strategy requirements.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 23:06:42",
+        "symbol": "ETHUSDT",
+        "decision": "WAIT",
+        "reason": "Il prezzo attuale di ETHUSDT \u00e8 2819.16, leggermente sotto la SMA 50 su 15m ma sopra la SMA 200, indicando una situazione mista. Il RSI 15m \u00e8 56.24, indicando che non siamo in una zona di ipercomprato, ma non c'\u00e8 un forte slancio rialzista. Il MACD su 15m mostra una situazione neutrale senza indicazioni chiare di trend. Sul timeframe 4H, il trend \u00e8 considerato ribassista con un RSI di 46.04, che non supporta un'operazione long in questo momento. Il sentiment di mercato \u00e8 positivo, ma la tecnica mostra segnali contrastanti tra i timeframe 15m e 4H. Considerando la divergenza tra i segnali tecnici e il sentiment, \u00e8 preferibile attendere una situazione di mercato pi\u00f9 chiara.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 23:06:52",
+        "symbol": "SOLUSDT",
+        "decision": "OPEN_LONG",
+        "reason": "Il prezzo attuale di SOLUSDT \u00e8 leggermente sopra la SMA 50 sul timeframe 15m, indicando un potenziale slancio rialzista. L'RSI 14 sul timeframe 15m \u00e8 a 54.17, cresciuto rispetto al valore precedente di 51.76, suggerendo un aumento della forza rialzista senza essere ancora in ipercomprato. Il MACD sul 15m mostra una linea leggermente positiva ma con un istogramma negativo, indicando una possibile incertezza nel breve termine. Tuttavia, la presenza di un trend rialzista e un RSI in aumento prevale per una decisione di entrata long. Il sentiment di mercato \u00e8 positivo con un 77.88% di voti positivi, supportando ulteriormente la decisione di andare long. Il prezzo \u00e8 sopra la SMA 200 sul 15m, confermando ulteriormente il bias rialzista. Il prezzo attuale \u00e8 vicino alla SMA 50 sul 4H ma con un bias bearish a lungo termine. Questo suggerisce cautela, ma la decisione intraday si basa principalmente sui dati a breve termine. Il stop loss \u00e8 impostato poco sotto il prezzo di entrata per minimizzare le perdite in caso di inversione di tendenza improvvisa. Il take profit \u00e8 impostato considerando l'ATR sul 15m e un ragionevole obiettivo di profitto.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 23:07:01",
+        "symbol": "XRPUSDT",
+        "decision": "OPEN_LONG",
+        "reason": "Il prezzo attuale di XRPUSDT \u00e8 2.0556, leggermente sopra la SMA 50 (2.054692) sul timeframe 15m, indicando un potenziale slancio rialzista. L'RSI 14 sul timeframe 15m \u00e8 56.546, indicando che il mercato non \u00e8 in ipercomprato, lasciando spazio per ulteriori guadagni. Il sentiment di mercato \u00e8 molto positivo con un 87.37% di voti positivi e un aumento del prezzo nelle ultime 24 ore del 5.70%, supportando ulteriormente la decisione di aprire una posizione long. Nonostante il bias ribassista a lungo termine indicato dai dati tecnici sul timeframe 4H e da Fibonacci, il contesto intraday e il sentiment positivo prevalgono per un'operazione di breve termine.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 23:07:12",
+        "symbol": "ADAUSDT",
+        "decision": "WAIT",
+        "reason": "L'analisi del timeframe 15 minuti mostra un leggero slancio rialzista con il prezzo attuale di ADAUSDT che \u00e8 leggermente sotto la SMA 50 (0.41255) ma sopra la SMA 200 (0.40650950000000013), suggerendo una potenziale indecisione nel breve termine. Il RSI 14 periodi sul 15m \u00e8 in una zona neutra (54.71), indicando che non ci sono condizioni di ipercomprato o ipervenduto che potrebbero suggerire un ingresso immediato. Sul timeframe 4 ore, il trend \u00e8 bearish con il prezzo attuale che \u00e8 significativamente sotto la SMA 50 (0.45216400000000007) e la SMA 200 (0.5601750000000003), ma il RSI mostra un leggero miglioramento passando da 42.73 a 40.64, suggerendo una possibile stabilizzazione o un'inversione molto lenta. Il sentiment di mercato \u00e8 positivo con il 80.28% di voti positivi, ma questo non \u00e8 sufficiente per contraddire i segnali tecnici contrastanti tra i due timeframe analizzati. In assenza di una chiara direzione del trend e con segnali tecnici contrastanti, la decisione pi\u00f9 prudente \u00e8 attendere ulteriori conferme prima di aprire una posizione.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 23:07:22",
+        "symbol": "BNBUSDT",
+        "decision": "WAIT",
+        "reason": "Il prezzo attuale di BNBUSDT \u00e8 849.6, situato sopra la SMA 50 (847.586) sul timeframe 15m, indicando una leggera tendenza rialzista a breve termine. Il RSI 14 sul timeframe 15m \u00e8 58.446, indicando che il mercato non \u00e8 in ipercomprato ma si sta avvicinando a quella soglia. Sul timeframe 4H, il prezzo \u00e8 sotto la SMA 50 (888.412) e la SMA 200 (999.2895), indicando una tendenza ribassista a medio termine. Il RSI 14 \u00e8 46.0109, suggerendo che il mercato non \u00e8 n\u00e9 in ipervenduto n\u00e9 in ipercomprato su questo timeframe. Il MACD sul 15m mostra un segnale neutrale con una linea MACD di 1.6511 e un istogramma di 0.1879, indicando una mancanza di direzionalit\u00e0 forte nel breve termine. Il sentiment di mercato \u00e8 moderatamente positivo con un 46.15% di voti positivi, ma questo non fornisce una chiara indicazione per un ingresso immediato. Considerando la divergenza tra i segnali rialzisti a breve termine e i segnali ribassisti a medio termine, insieme alla mancanza di una chiara direzionalit\u00e0 dal MACD e un RSI che si avvicina a zone di ipercomprato sul breve termine, si decide di attendere per un segnale pi\u00f9 chiaro.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 23:07:31",
+        "symbol": "LTCUSDT",
+        "decision": "OPEN_LONG",
+        "reason": "Il prezzo attuale di LTCUSDT \u00e8 83.65, posizionato sopra sia la SMA 50 che la SMA 200 sul timeframe 15m, indicando una tendenza rialzista a breve termine. L'RSI 14 sul 15m \u00e8 a 54.88, non in ipercomprato, suggerendo che c'\u00e8 ancora spazio per un movimento rialzista. Sul timeframe 4H, nonostante una tendenza generale ribassista, l'histogramma MACD mostra un incremento, indicando una potenziale inversione o almeno un rallentamento della discesa. Il sentiment di mercato \u00e8 estremamente positivo con il 97.59% di voti positivi, supportando ulteriormente la decisione di un'operazione long. Il prezzo si trova nella 'golden pocket' di Fibonacci, un'area comunemente associata a potenziali rimbalzi o inversioni di tendenza.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 23:22:49",
+        "symbol": "ETHUSDT",
+        "decision": "WAIT",
+        "reason": "Il prezzo attuale di ETHUSDT \u00e8 2798.89, sotto la SMA 50 (2821.969) ma sopra la SMA 200 (2778.4204) su timeframe 15m, indicando una situazione di incertezza. Il RSI 14 su timeframe 15m \u00e8 45.14, indicando che non siamo in una zona di ipercomprato o ipervenduto, ma mostra una diminuzione rispetto al valore precedente di 56.24, suggerendo una perdita di slancio rialzista. Il MACD su timeframe 15m segnala una BEARISH_CROSS, ma il prezzo \u00e8 vicino alla SMA 200 che potrebbe agire come supporto, creando una situazione contrastante. Sul timeframe 4H, il trend \u00e8 BEARISH con il prezzo attuale sotto la SMA 50 (2969.2872) e ben sotto la SMA 200 (3502.48675), ma l'RSI \u00e8 46.04, non indicando una forte pressione ribassista. Il sentiment di mercato \u00e8 positivo con il 82.95% di voti positivi, ma la tecnica mostra segnali contrastanti. Data la situazione di incertezza e i segnali tecnici contrastanti, \u00e8 consigliabile attendere un segnale pi\u00f9 chiaro prima di prendere una posizione.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 23:23:00",
+        "symbol": "SOLUSDT",
+        "decision": "WAIT",
+        "reason": "Il prezzo attuale di SOLUSDT \u00e8 130.95, leggermente sotto la SMA 50 sul timeframe 15m ma sopra la SMA 200, indicando una possibile indecisione nel breve termine. L'RSI 14 sul 15m \u00e8 sceso da 54.16 a 43.18, mostrando una perdita di momentum rialzista ma non \u00e8 ancora in zona di ipervenduto, suggerendo che potrebbe esserci ancora spazio per movimenti discendenti prima di considerare un ingresso long. Sul timeframe 4H, l'RSI \u00e8 leggermente al di sopra del punto medio (51.27), indicando una neutralit\u00e0 del mercato senza una chiara direzione. Il MACD sul 15m mostra una linea e un istogramma vicini allo zero con uno status neutrale, indicando l'assenza di una forte tendenza nel breve termine. L'analisi di Fibonacci mostra una tendenza con bias ribassista, ma il prezzo attuale non si trova in una zona chiave che suggerisce un punto di ingresso ottimale. Il sentiment di mercato \u00e8 positivo secondo i dati di CoinGecko, ma questa informazione da sola non \u00e8 sufficiente per giustificare un'operazione in assenza di conferme tecniche. La combinazione di segnali tecnici contrastanti e l'assenza di un chiaro segnale di ingresso suggeriscono una posizione di attesa fino a quando non emergono indicazioni pi\u00f9 chiare.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 23:23:10",
+        "symbol": "XRPUSDT",
+        "decision": "WAIT",
+        "reason": "Il prezzo attuale di XRPUSDT \u00e8 2.0475, con un RSI a 15 minuti di 42.548, indicando una leggera pressione ribassista ma non estrema. Il MACD a 15 minuti mostra una situazione neutrale, con una linea MACD leggermente positiva ma un istogramma negativo, suggerendo incertezza nel breve termine. Il prezzo si trova sotto la SMA 50 a 15 minuti ma sopra la SMA 200, indicando una possibile indecisione nel trend a breve termine. L'analisi a 4 ore mostra un RSI di 56.699, leggermente rialzista, ma il prezzo \u00e8 sotto la SMA 50 e ben sotto la SMA 200, suggerendo una visione pi\u00f9 lunga termine bearish. I dati di Fibonacci indicano una tendenza bearish con il prezzo attuale lontano dalla prossima resistenza significativa a 2.1209258. Il sentiment di mercato \u00e8 molto positivo, ma le analisi tecniche mostrano segnali contrastanti. Data la presenza di segnali tecnici contrastanti e l'assenza di una chiara direzione di trend nel breve termine, la decisione pi\u00f9 prudente \u00e8 attendere una configurazione di mercato pi\u00f9 definita.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 23:23:20",
+        "symbol": "ADAUSDT",
+        "decision": "WAIT",
+        "reason": "Il prezzo attuale di ADAUSDT \u00e8 0.4104, situato sotto la SMA 50 (0.412568) ma sopra la SMA 200 (0.4065315000000001) su timeframe 15m, indicando una situazione di incertezza. L'RSI 14 su timeframe 15m \u00e8 43.97, sotto la soglia di 50, suggerendo una leggera pressione ribassista, ma non abbastanza per confermare un trend forte. Il MACD su timeframe 15m mostra un BEARISH_CROSS, ma la linea MACD \u00e8 molto vicina allo zero, suggerendo che il movimento potrebbe non essere forte. Su timeframe 4H, il trend \u00e8 indicato come BEARISH con un RSI 14 di 40.64, che supporta una visione pi\u00f9 ribassista, ma il MACD \u00e8 in posizione NEUTRALE, indicando mancanza di direzionalit\u00e0 forte. Il sentiment di mercato \u00e8 positivo con un 81.16% di voti positivi, che potrebbe contrastare la pressione ribassista tecnica. Considerando l'incertezza tecnica e il contrasto tra sentiment positivo e segnali tecnici misti, la decisione pi\u00f9 prudente \u00e8 aspettare un segnale pi\u00f9 chiaro.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 23:23:31",
+        "symbol": "BNBUSDT",
+        "decision": "WAIT",
+        "reason": "Il prezzo attuale di BNBUSDT \u00e8 847.8, con un leggero slancio rialzista dato che il prezzo \u00e8 appena sopra la SMA 50 sul timeframe 15m, ma sotto la SMA 50 e SMA 200 sul timeframe 4H indicando una divergenza tra i due timeframe. L'RSI 14 sul timeframe 15m \u00e8 48.54, indicando che il mercato non \u00e8 n\u00e9 in ipercomprato n\u00e9 in ipervenduto, ma si \u00e8 spostato verso il basso rispetto al valore precedente di 58.45, suggerendo una perdita di momentum rialzista. Il MACD sul timeframe 15m mostra un BEARISH CROSS, mentre sul 4H il MACD \u00e8 in una condizione NEUTRALE, suggerendo incertezza nel breve termine. I livelli di Fibonacci indicano una tendenza con bias ribassista, con il prezzo attuale che non si trova nella 'golden pocket', suggerendo che non ci sia un chiaro supporto vicino. Il sentimento di mercato \u00e8 neutrale con un cambiamento di prezzo nelle ultime 24 ore del 1.47% e un sentiment della comunit\u00e0 al 50% di voti positivi. Considerando la divergenza tra i segnali rialzisti e ribassisti, e l'assenza di un chiaro segnale di entrata sia sul breve che sul lungo termine, la decisione pi\u00f9 prudente \u00e8 attendere una definizione pi\u00f9 chiara del mercato.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 23:23:42",
+        "symbol": "LTCUSDT",
+        "decision": "WAIT",
+        "reason": "Il prezzo attuale di LTCUSDT \u00e8 83.21, situato tra la SMA 50 (83.5366) e la SMA 200 (82.78595) su timeframe 15m, indicando una situazione di incertezza. L'RSI 14 su timeframe 15m \u00e8 44.44, indicando che il mercato non \u00e8 n\u00e9 in ipervenduto n\u00e9 in ipercomprato, ma si \u00e8 spostato verso il basso rispetto al valore precedente di 54.88. Il MACD su timeframe 15m mostra un incrocio ribassista, ma con una divergenza negativa minima (-0.030191242251882328), suggerendo una possibile perdita di momentum ribassista. Sul timeframe 4H, l'RSI \u00e8 39.77, indicando una pressione ribassista, ma senza segnali forti di ipervenduto. Il MACD su 4H \u00e8 negativo ma con una divergenza positiva (0.5252753345629415), indicando una possibile stabilizzazione o inversione della tendenza ribassista. Il sentiment di mercato \u00e8 estremamente positivo con il 97.59% di voti positivi, suggerendo un potenziale supporto al prezzo. Il prezzo si trova nel 'golden pocket' di Fibonacci, indicando un potenziale punto di inversione o di supporto. Data la presenza di segnali tecnici contrastanti e l'assenza di una chiara direzione del prezzo, la decisione migliore \u00e8 attendere un segnale pi\u00f9 definito.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 23:38:55",
+        "symbol": "ETHUSDT",
+        "decision": "WAIT",
+        "reason": "Il prezzo attuale di ETHUSDT \u00e8 sotto la SMA 50 sul timeframe 15m, indicando una pressione ribassista a breve termine, ma \u00e8 sopra la SMA 200, suggerendo un supporto a lungo termine. L'RSI 14 sul 15m \u00e8 sceso da 45.14 a 41.91, indicando una perdita di momentum rialzista ma non \u00e8 ancora in zona di ipervenduto, che potrebbe suggerire una possibile inversione o stabilizzazione. Sul timeframe 4H, il prezzo \u00e8 ben sotto la SMA 50 e la SMA 200, confermando la tendenza ribassista a lungo termine. Tuttavia, l'RSI 14 \u00e8 relativamente piatto, passando da 47.51 a 46.04, indicando una mancanza di momentum decisivo. Il MACD sul 15m mostra uno status neutrale con una linea di segnale leggermente positiva, ma con un istogramma negativo, suggerendo incertezza nel breve termine. L'analisi di Fibonacci conferma una tendenza ribassista con il prezzo attuale tra il supporto e la resistenza, ma non in 'golden pocket', suggerendo che potrebbe non esserci un punto di ingresso ottimale basato su questa analisi. Il sentiment di mercato \u00e8 positivo secondo i dati di CoinGecko, ma questa informazione da sola non \u00e8 sufficiente per giustificare un'operazione di trading in assenza di conferme tecniche pi\u00f9 forti. Data la combinazione di segnali tecnici contrastanti e l'assenza di un chiaro segnale di ingresso basato sulle attuali condizioni di mercato, la decisione pi\u00f9 prudente \u00e8 attendere una configurazione di trading pi\u00f9 definita.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 23:39:07",
+        "symbol": "SOLUSDT",
+        "decision": "WAIT",
+        "reason": "Il prezzo attuale di SOLUSDT \u00e8 130.55, posizionato tra la SMA 50 (131.66) e la SMA 200 (128.81) sul grafico a 15 minuti, indicando una possibile indecisione nel breve termine. L'RSI a 15 minuti \u00e8 41.69, sotto la soglia di 50, ma non abbastanza basso da indicare una condizione di ipervenduto che giustificherebbe un ingresso long. Il MACD a 15 minuti mostra una linea di segnale neutrale, con una divergenza negativa (histogramma negativo), suggerendo che non c'\u00e8 un forte slancio in nessuna direzione. Sul grafico a 4 ore, il trend \u00e8 indicato come bearish con un RSI di 51.27, che si trova in una zona neutra, e il MACD mostra un segnale neutrale con un'histogramma positiva, indicando una possibile inversione o stabilizzazione. I dati di Fibonacci indicano un trend bearish bias con il prezzo attuale lontano dai livelli chiave di supporto e resistenza, suggerendo che potrebbe non esserci un ingresso chiaro basato su questi livelli. Il sentiment di mercato \u00e8 positivo secondo i dati di CoinGecko, ma questa informazione da sola non \u00e8 sufficiente per giustificare un'operazione di trading senza un chiaro segnale tecnico. Considerando tutti i fattori, il mercato sembra essere in una fase di indecisione senza un chiaro segnale di trading per un'operazione intraday. \u00c8 consigliabile attendere segnali pi\u00f9 chiari prima di prendere una posizione.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 23:39:18",
+        "symbol": "XRPUSDT",
+        "decision": "WAIT",
+        "reason": "Il prezzo attuale di XRPUSDT \u00e8 2.0451, posizionato sotto la SMA 50 sul timeframe 15m indicando una possibile pressione ribassista a breve termine, ma sopra la SMA 200, suggerendo un supporto a lungo termine. L'RSI 14 sul 15m \u00e8 44.46, leggermente migliorato rispetto al valore precedente di 42.55, indicando una leggera ripresa ma ancora sotto il livello di 50, il che non conferma un forte slancio rialzista. Sul timeframe 4H, l'RSI \u00e8 56.69, mostrando una condizione pi\u00f9 neutra verso il rialzo, ma il MACD \u00e8 in posizione neutrale con una leggera inclinazione positiva data dal valore dell'istogramma. I dati di Fibonacci mostrano un bias ribassista con il prezzo attuale che si trova tra il supporto e la resistenza pi\u00f9 vicini, senza essere nel 'golden pocket', il che suggerisce incertezza. L'analisi Gann indica una debole inversione con il prezzo attuale che si trova tra i livelli di supporto e resistenza identificati, suggerendo una possibile volatilit\u00e0 o indecisione. Il sentiment di mercato \u00e8 molto positivo basato sui dati di CoinGecko, con un cambiamento di prezzo nelle ultime 24 ore positivo del 4.94% e un sentiment della comunit\u00e0 dell'87.82% di voti positivi. Data l'incertezza tra i segnali tecnici contrastanti e il sentiment di mercato positivo, la decisione pi\u00f9 prudente \u00e8 attendere una conferma pi\u00f9 chiara della direzione del mercato.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 23:39:30",
+        "symbol": "ADAUSDT",
+        "decision": "WAIT",
+        "reason": "Il prezzo attuale di ADAUSDT \u00e8 0.4089, posizionato sotto la SMA 50 sul timeframe 15 minuti, indicando una leggera pressione ribassista a breve termine. Il RSI 14 sul timeframe 15 minuti \u00e8 43.97, indicando che il mercato non \u00e8 n\u00e9 in ipervenduto n\u00e9 in ipercomprato, suggerendo mancanza di slancio immediato. Il MACD sul timeframe 15 minuti mostra uno status neutrale con una leggera divergenza negativa, suggerendo incertezza nel breve termine. Il trend di fondo su 4 ore \u00e8 ritenuto bearish, con il prezzo attuale ben al di sotto della SMA 50, confermando una tendenza ribassista a medio termine. Il RSI sul timeframe 4 ore \u00e8 40.64, indicando ancora una volta mancanza di slancio, ma anche che il mercato non \u00e8 in una zona di ipervenduto. Il sentimento di mercato \u00e8 positivo con un 81.82% di voti positivi, ma questo contrasta con l'analisi tecnica che mostra incertezza e una tendenza ribassista a medio termine. Considerando tutti questi fattori, il mercato appare completamente piatto con segnali contrastanti tra l'analisi tecnica e il sentimento di mercato. \u00c8 consigliato attendere per un segnale pi\u00f9 chiaro.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 23:39:40",
+        "symbol": "BNBUSDT",
+        "decision": "WAIT",
+        "reason": "Il prezzo attuale di BNBUSDT \u00e8 844.4, leggermente sotto la SMA 50 (847.842) ma sopra la SMA 200 (836.315) su timeframe 15m, indicando una situazione di incertezza. L'RSI 14 su 15m \u00e8 43.896, indicando che il mercato non \u00e8 n\u00e9 in ipervenduto n\u00e9 in ipercomprato, ma si sta muovendo verso il basso rispetto alla lettura precedente di 48.536. Sul timeframe 4H, il prezzo \u00e8 ben sotto la SMA 50 (888.412) e la SMA 200 (999.2895), con un RSI 14 di 46.0109, indicando una pressione ribassista ma senza segnali chiari di ingresso. Il MACD su entrambi i timeframe mostra uno stato NEUTRAL, suggerendo l'assenza di una direzione di mercato chiara. I dati di Fibonacci indicano una bias bearish con il prezzo attuale tra il supporto pi\u00f9 vicino a 766.2644 e la resistenza pi\u00f9 vicina a 896.3972, ma non in 'golden pocket', il che non fornisce un punto di ingresso convincente. Il sentiment di mercato \u00e8 neutrale con un cambiamento di prezzo nelle ultime 24 ore di 1.12% e un sentiment della comunit\u00e0 al 50% positivo. Considerando l'incertezza generale e l'assenza di segnali di trading chiari, la decisione migliore \u00e8 attendere una configurazione di mercato pi\u00f9 definita.",
+        "strategy_used": "intraday"
+    },
+    {
+        "timestamp": "2025-11-23 23:39:50",
+        "symbol": "LTCUSDT",
+        "decision": "WAIT",
+        "reason": "Il prezzo attuale di LTCUSDT \u00e8 82.86, situato sotto la SMA 50 (83.5406) ma sopra la SMA 200 (82.78885) su timeframe 15m, indicando una situazione di incertezza. L'RSI 14 su timeframe 15m \u00e8 42.56, indicando che il mercato non \u00e8 n\u00e9 in ipervenduto n\u00e9 in ipercomprato, ma si sta spostando verso il basso rispetto al valore precedente di 44.43. Su timeframe 4H, l'RSI \u00e8 39.78, anch'esso indicando che il mercato non \u00e8 in una zona estrema, ma mostra una leggera tendenza al ribasso. Il MACD su entrambi i timeframe mostra uno status 'NEUTRAL', con il mercato che non presenta una chiara direzione. Il sentiment di mercato \u00e8 estremamente positivo, con il 98.18% di voti positivi, ma i dati tecnici non confermano un chiaro segnale d'ingresso. LTCUSDT si trova nella 'golden pocket' di Fibonacci, indicando un potenziale punto di inversione, ma senza conferme tecniche immediate su altri indicatori. La presenza di segnali contrastanti e l'assenza di una chiara direzione di trend suggeriscono una posizione di attesa fino a quando non si presenteranno segnali pi\u00f9 definiti.",
+        "strategy_used": "intraday"
     }
 ]

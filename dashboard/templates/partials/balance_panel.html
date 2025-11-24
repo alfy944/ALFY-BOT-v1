@@ -1,0 +1,28 @@
+<div style="display: flex; gap: 40px; align-items: baseline;">
+    <div>
+        <div style="font-size: 0.8rem; color: #8b949e; text-transform: uppercase; letter-spacing: 1px;">Equity</div>
+        <div style="font-size: 2.2rem; font-weight: bold; color: white;">
+            $ {{ "%.2f"|format(wallet.equity) }}
+        </div>
+    </div>
+    
+    <div>
+        <div style="font-size: 0.8rem; color: #8b949e; text-transform: uppercase; letter-spacing: 1px;">Disponibile</div>
+        <div style="font-size: 1.5rem; color: #c9d1d9;">
+            $ {{ "%.2f"|format(wallet.available) }}
+        </div>
+    </div>
+    
+    <div style="background: #161b22; padding: 5px 15px; border-radius: 8px; border: 1px solid #30363d;">
+        <div style="font-size: 0.7rem; color: #8b949e; text-transform: uppercase;">Live PnL (Open Pos)</div>
+        <div style="font-size: 1.8rem; font-weight: bold; color: {% if wallet.live_pnl >= 0 %}var(--green){% else %}var(--red){% endif %};">
+            {% if wallet.live_pnl > 0 %}+{% endif %}{{ "%.2f"|format(wallet.live_pnl) }} $
+        </div>
+    </div>
+</div>
+
+{% if wallet.error %}
+<div style="color: var(--red); margin-top: 10px; font-size: 0.8rem;">
+    ⚠️ Errore connessione API: {{ wallet.error }}
+</div>
+{% endif %}

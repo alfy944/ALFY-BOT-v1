@@ -1,4 +1,5 @@
-streamlit
-psycopg2-binary
-pandas
-plotly
+fastapi
+uvicorn
+requests
+jinja2
+python-multipart

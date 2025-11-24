@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Trading Dashboard{% endblock %}</title>
+    <script src="https://unpkg.com/htmx.org@1.9.6"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root { --bg: #0d1117; --card: #161b22; --text: #c9d1d9; --accent: #58a6ff; --green: #2ea043; --red: #da3633; --yellow: #d29922; }
+        body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; padding: 20px; }
+        .card { background: var(--card); border: 1px solid #30363d; border-radius: 6px; padding: 16px; margin-bottom: 16px; }
+        .layout-main-row { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+        h2 { margin-top: 0; font-size: 1.2rem; display: flex; align-items: center; gap: 8px; }
+        .accent-dot { width: 8px; height: 8px; background: var(--accent); border-radius: 50%; display: inline-block; }
+        .card-subtitle { color: #8b949e; font-size: 0.85rem; margin-top: -10px; margin-bottom: 15px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 8px; border-bottom: 1px solid #30363d; text-align: left; font-size: 0.9rem; }
+        .pnl-pos { color: var(--green); } .pnl-neg { color: var(--red); }
+        
+        /* CONFIG PANEL & TRAFFIC LIGHT */
+        .config-row { display: flex; gap: 15px; align-items: center; flex-wrap: wrap; }
+        input, select { background: #0d1117; border: 1px solid #30363d; color: white; padding: 8px; border-radius: 4px; }
+        button { background: var(--accent); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; transition: 0.2s; }
+        button:hover { opacity: 0.8; }
+        
+        .traffic-light { width: 15px; height: 15px; border-radius: 50%; display: inline-block; margin-right: 10px; box-shadow: 0 0 8px rgba(0,0,0,0.5); }
+        .mode-calm { background-color: var(--green); box-shadow: 0 0 10px var(--green); }
+        .mode-balanced { background-color: var(--yellow); box-shadow: 0 0 10px var(--yellow); }
+        .mode-aggressive { background-color: var(--red); box-shadow: 0 0 10px var(--red); }
+
+        .success-message { color: var(--green); font-weight: bold; margin-left: 10px; animation: fadeOut 3s forwards; }
+        @keyframes fadeOut { 0% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
+        
+        /* CHART */
+        .chart-controls { display: flex; gap: 10px; margin-bottom: 10px; }
+        .chart-btn { background: #21262d; font-size: 0.8rem; padding: 4px 8px; }
+        .chart-btn.active { background: var(--accent); }
+    </style>
+</head>
+<body>
+    <h1 style="display: flex; align-items: center; justify-content: space-between;">
+        <span>🤖 Mitragliere Command Center</span>
+        <span style="font-size: 0.9rem; color: #8b949e; font-weight: normal;">Auto-save & Updates Active</span>
+    </h1>
+    
+    <!-- BRAIN CONFIG -->
+    <article class="card">
+        <h2>
+            <span class="accent-dot" style="background: orange;"></span> 
+            Brain Configuration
+        </h2>
+        <div id="config-panel" hx-get="/ui/config" hx-trigger="load">Loading Config...</div>
+    </article>
+
+    {% block content %}{% endblock %}
+</body>
+</html>

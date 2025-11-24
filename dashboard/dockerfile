@@ -1,20 +1,18 @@
-# Usiamo un'immagine Python ufficiale e leggera
+# Usa immagine Python leggera
 FROM python:3.10-slim
 
-# Impostiamo la cartella di lavoro all'interno del container
+# Imposta cartella di lavoro
 WORKDIR /app
 
-# Copiamo prima il file dei requisiti per sfruttare la cache di Docker
+# Copia i requisiti e installa
 COPY requirements.txt .
-
-# Installiamo le dipendenze Python necessarie per la dashboard
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiamo il codice sorgente della nostra dashboard
-COPY app.py .
+# Copia tutto il codice (app.py e cartella templates)
+COPY . .
 
-# Esponiamo la porta standard di Streamlit
+# Espone la porta
 EXPOSE 8501
 
-# Comando per avviare l'applicazione Streamlit quando il container parte
-CMD ["streamlit", "run", "app.py"]
+# Comando corretto per FastAPI
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8501"]

@@ -1,0 +1,73 @@
+<div>
+    <div class="chart-controls">
+        <button class="chart-btn" hx-get="/ui/chart?period=day" hx-target="#chart-container">1 Day</button>
+        <button class="chart-btn" hx-get="/ui/chart?period=week" hx-target="#chart-container">1 Week</button>
+        <button class="chart-btn" hx-get="/ui/chart?period=month" hx-target="#chart-container">1 Month</button>
+        <button class="chart-btn" hx-get="/ui/chart?period=all" hx-target="#chart-container">All Time</button>
+    </div>
+    
+    <div style="position: relative; height: 250px; width: 100%;">
+        <canvas id="equityChart"></canvas>
+    </div>
+    
+    <script>
+        // Distruggi il vecchio grafico se esiste per evitare sovrapposizioni
+        if (window.myEquityChart) {
+            window.myEquityChart.destroy();
+        }
+
+        var ctx = document.getElementById('equityChart').getContext('2d');
+        var gradient = ctx.createLinearGradient(0, 0, 0, 400);
+        gradient.addColorStop(0, 'rgba(88, 166, 255, 0.2)');
+        gradient.addColorStop(1, 'rgba(88, 166, 255, 0)');
+
+        window.myEquityChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: {{ labels | safe }},
+                datasets: [{
+                    label: 'Account Equity ($)',
+                    data: {{ values | safe }},
+                    borderColor: '#58a6ff',
+                    backgroundColor: gradient,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        backgroundColor: '#161b22',
+                        titleColor: '#c9d1d9',
+                        bodyColor: '#fff',
+                        borderColor: '#30363d',
+                        borderWidth: 1
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: '#21262d' },
+                        ticks: { color: '#8b949e', maxTicksLimit: 6 }
+                    },
+                    y: {
+                        grid: { color: '#21262d' },
+                        ticks: { color: '#8b949e' }
+                    }
+                },
+                interaction: {
+                    mode: 'nearest',
+                    axis: 'x',
+                    intersect: false
+                }
+            }
+        });
+    </script>
+</div>

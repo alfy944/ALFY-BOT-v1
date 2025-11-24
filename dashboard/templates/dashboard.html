@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<section class="layout-main-row">
+    <div style="display:flex; flex-direction:column; gap:1rem;">
+        
+        <!-- EQUITY CHART CARD -->
+        <article class="card">
+            <div style="margin-bottom:0.5rem;">
+                <h2><span class="accent-dot"></span> Equity Curve</h2>
+                <p class="card-subtitle">Andamento storico del saldo.</p>
+            </div>
+            <!-- Carica default 'all' -->
+            <div id="chart-container" hx-get="/ui/chart?period=all" hx-trigger="load">
+                Loading Chart...
+            </div>
+        </article>
+
+        <article class="card">
+            <div style="margin-bottom:0.5rem;">
+                <h2><span class="accent-dot"></span> Portafoglio Live</h2>
+                <p class="card-subtitle">Saldo tempo reale.</p>
+            </div>
+            <div id="balance-panel" hx-get="/ui/balance" hx-trigger="load, every 30s">Loading...</div>
+        </article>
+
+        <article class="card">
+            <div style="margin-bottom:0.5rem;">
+                <h2><span class="accent-dot"></span> Posizioni Aperte</h2>
+                <p class="card-subtitle">PnL aggiornato ogni 15s.</p>
+            </div>
+            <div id="open-positions-row" hx-get="/ui/open-positions" hx-trigger="load, every 15s">Loading...</div>
+        </article>
+    </div>
+
+    <aside class="card">
+        <h2><span class="accent-dot"></span> System Status</h2>
+        <div style="color: #8b949e; font-family: monospace; font-size: 0.9rem;">
+             <p>Status: <span style="color: var(--green);">ONLINE</span></p>
+             <p>Update Rate: <strong>15 min</strong></p>
+             <hr style="border-color: #30363d;">
+             <p><em>Il grafico si aggiorna automaticamente ogni 15 minuti o dopo ogni trade.</em></p>
+        </div>
+    </aside>
+</section>
+{% endblock %}

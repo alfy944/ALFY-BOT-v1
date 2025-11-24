@@ -1,0 +1,18 @@
+[
+    {
+        "symbol": "BTCUSDT",
+        "side": "Buy",
+        "size": "0.001",
+        "entry_price": "83824.3",
+        "pnl": "2.90151",
+        "stop_loss": "86441"
+    },
+    {
+        "symbol": "DOGEUSDT",
+        "side": "Buy",
+        "size": "888",
+        "entry_price": "0.1407",
+        "pnl": "3.85392",
+        "stop_loss": "0.14386"
+    }
+]
