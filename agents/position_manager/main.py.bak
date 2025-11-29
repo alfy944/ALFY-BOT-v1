@@ -292,9 +292,6 @@ def open_position(order: OrderRequest):
     lev = min(order.leverage, MAX_LEVERAGE)
     size = min(order.size_pct, MAX_SIZE_PCT)
     qty = round_qty((eq * size * lev) / price, info['qty_step'])
-    # Force min qty if too small but we have enough margin
-    if qty < info['min_qty'] and (eq * size * lev) >= (info['min_qty'] * price * 0.5):
-        qty = info['min_qty']
     if qty < info['min_qty']: return OrderResponse(status="rejected", message=f"Qty {qty} < min {info['min_qty']}")
     sl = round_price(order.stop_loss, info['tick_size'])
     tp = round_price(order.take_profit, info['tick_size'])

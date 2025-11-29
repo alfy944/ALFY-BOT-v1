@@ -1,5 +1,5 @@
 fastapi
 uvicorn
+openai
 pydantic
-requests
-openai>=1.40.0
+httpx

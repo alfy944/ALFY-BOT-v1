@@ -3,221 +3,102 @@ version: '3.8'
 services:
   technical-analyzer-agent:
     build:
-      context: ./agents/technical_analyzer
-      dockerfile: Dockerfile
+      context: ./agents/01_technical_analyzer
     container_name: technical-analyzer-agent
-    restart: unless-stopped
-    environment:
-      - BYBIT_API_KEY=${BYBIT_API_KEY}
-      - BYBIT_API_SECRET=${BYBIT_API_SECRET}
-      - BYBIT_TESTNET=${BYBIT_TESTNET:-false}
     ports:
       - "8001:8000"
     networks:
       - trading-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    restart: always
 
-  fibonacci-cyclical-agent:
+  forecaster-agent:
     build:
-      context: ./agents/fibonacci_agent
-      dockerfile: Dockerfile
-    container_name: fibonacci-cyclical-agent
-    restart: unless-stopped
-    environment:
-      - BYBIT_API_KEY=${BYBIT_API_KEY}
-      - BYBIT_API_SECRET=${BYBIT_API_SECRET}
-      - BYBIT_TESTNET=${BYBIT_TESTNET:-false}
+      context: ./agents/08_forecaster_agent
+    container_name: forecaster-agent
     ports:
       - "8002:8000"
     networks:
       - trading-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    restart: always
 
-  gann-analyzer-agent:
+  fibonacci-cyclical-agent:
     build:
-      context: ./agents/gann_agent
-      dockerfile: Dockerfile
-    container_name: gann-analyzer-agent
-    restart: unless-stopped
-    environment:
-      - BYBIT_API_KEY=${BYBIT_API_KEY}
-      - BYBIT_API_SECRET=${BYBIT_API_SECRET}
-      - BYBIT_TESTNET=${BYBIT_TESTNET:-false}
+      context: ./agents/03_fibonacci_agent
+    container_name: fibonacci-cyclical-agent
     ports:
       - "8003:8000"
     networks:
       - trading-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  news-sentiment-agent:
+    restart: always
+    
+  master-ai-agent:
     build:
-      context: ./agents/news_sentiment
-      dockerfile: Dockerfile
-    container_name: news-sentiment-agent
-    restart: unless-stopped
-    environment:
-      - COINGECKO_API_KEY=${COINGECKO_API_KEY}
-      - SENTIMENT_CACHE_TTL=${SENTIMENT_CACHE_TTL:-900}
+      context: ./agents/04_master_ai_agent
+    container_name: master-ai-agent
+    env_file: .env
     ports:
       - "8004:8000"
     networks:
       - trading-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    restart: always
 
-  master-ai-agent:
+  news-sentiment-agent:
     build:
-      context: ./agents/master_ai_agent
-      dockerfile: Dockerfile
-    container_name: master-ai-agent
-    restart: unless-stopped
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
-      - MIN_CONFIDENCE=${MIN_CONFIDENCE:-60}
-      - LEVERAGE_SCALP=${LEVERAGE_SCALP:-5}
-      - LEVERAGE_SWING=${LEVERAGE_SWING:-3}
-      - SIZE_PCT=${SIZE_PCT:-0.15}
-      - POSITION_MANAGER_AGENT_URL=http://position-manager-agent:8000
-      - LEARNING_AGENT_URL=http://learning-agent:8000
+      context: ./agents/06_news_sentiment_agent
+    container_name: news-sentiment-agent
+    env_file: .env
     ports:
       - "8005:8000"
-    volumes:
-      - trading-data:/app/data
     networks:
       - trading-network
-    depends_on:
-      - position-manager-agent
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    restart: always
+
+  gann-analyzer-agent:
+    build:
+      context: ./agents/05_gann_analyzer_agent
+    container_name: gann-analyzer-agent
+    ports:
+      - "8006:8000"
+    networks:
+      - trading-network
+    restart: always
 
   position-manager-agent:
     build:
-      context: ./agents/position_manager
-      dockerfile: Dockerfile
+      context: ./agents/07_position_manager
     container_name: position-manager-agent
-    restart: unless-stopped
-    environment:
-      - BYBIT_API_KEY=${BYBIT_API_KEY}
-      - BYBIT_API_SECRET=${BYBIT_API_SECRET}
-      - BYBIT_TESTNET=${BYBIT_TESTNET:-false}
-      - MAX_LEVERAGE=${MAX_LEVERAGE:-10}
-      - MAX_POSITION_SIZE_PCT=${MAX_POSITION_SIZE_PCT:-0.25}
-      - ENABLE_TRAILING_STOP=${ENABLE_TRAILING_STOP:-true}
-      - TRAILING_ACTIVATION_PCT=${TRAILING_ACTIVATION_PCT:-1.0}
-      - TRAILING_CALLBACK_PCT=${TRAILING_CALLBACK_PCT:-0.5}
-      - ENABLE_BREAKEVEN=${ENABLE_BREAKEVEN:-true}
-      - BREAKEVEN_ACTIVATION_PCT=${BREAKEVEN_ACTIVATION_PCT:-0.5}
-      - BREAKEVEN_OFFSET_PCT=${BREAKEVEN_OFFSET_PCT:-0.1}
-      - MONITOR_INTERVAL=${MONITOR_INTERVAL:-60}
-    ports:
-      - "8006:8000"
-    volumes:
-      - trading-data:/app/data
-    networks:
-      - trading-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  learning-agent:
-    build:
-      context: ./agents/learning_agent
-      dockerfile: Dockerfile
-    container_name: learning-agent
-    restart: unless-stopped
-    environment:
-      - BYBIT_API_KEY=${BYBIT_API_KEY}
-      - BYBIT_API_SECRET=${BYBIT_API_SECRET}
-      - BYBIT_TESTNET=${BYBIT_TESTNET:-false}
-      - LEARNING_INTERVAL=${LEARNING_INTERVAL:-3600}
+    env_file: .env
     ports:
       - "8007:8000"
-    volumes:
-      - learning-data:/app/data
     networks:
       - trading-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  dashboard:
-    build:
-      context: ./agents/dashboard
-      dockerfile: Dockerfile
-    container_name: dashboard
-    restart: unless-stopped
-    environment:
-      - POSITION_MANAGER_URL=http://position-manager-agent:8000
-      - MASTER_AI_URL=http://master-ai-agent:8000
-      - LEARNING_AGENT_URL=http://learning-agent:8000
-    ports:
-      - "8080:8000"
-    networks:
-      - trading-network
-    depends_on:
-      - position-manager-agent
-      - master-ai-agent
-      - learning-agent
+    restart: always
 
   orchestrator:
     build:
       context: ./agents/orchestrator
-      dockerfile: Dockerfile
     container_name: orchestrator
-    restart: unless-stopped
-    environment:
-      - SCAN_INTERVAL=${SCAN_INTERVAL:-15}
-      - REQUEST_TIMEOUT=${REQUEST_TIMEOUT:-90}
-      - INTER_SYMBOL_DELAY=${INTER_SYMBOL_DELAY:-2}
-      - TECHNICAL_ANALYZER_URL=http://technical-analyzer-agent:8000
-      - FIBONACCI_AGENT_URL=http://fibonacci-cyclical-agent:8000
-      - GANN_AGENT_URL=http://gann-analyzer-agent:8000
-      - NEWS_SENTIMENT_AGENT_URL=http://news-sentiment-agent:8000
-      - MASTER_AI_AGENT_URL=http://master-ai-agent:8000
-      - POSITION_MANAGER_AGENT_URL=http://position-manager-agent:8000
-    volumes:
-      - orchestrator-logs:/app/logs
+    env_file: .env
     networks:
       - trading-network
+    restart: always
     depends_on:
-      - technical-analyzer-agent
-      - fibonacci-cyclical-agent
-      - gann-analyzer-agent
-      - news-sentiment-agent
-      - master-ai-agent
       - position-manager-agent
+      - master-ai-agent
+
+  dashboard:
+    build:
+      context: ./agents/dashboard
+    container_name: dashboard
+    ports:
+      - "8080:8000"
+    environment:
+      - POSITION_MANAGER_URL=http://position-manager-agent:8000
+      - MASTER_AI_URL=http://master-ai-agent:8000
+    networks:
+      - trading-network
+    restart: always
 
 networks:
   trading-network:
     driver: bridge
-
-volumes:
-  trading-data:
-    driver: local
-  orchestrator-logs:
-    driver: local
-  learning-data:
-    driver: local
