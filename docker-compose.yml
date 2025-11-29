@@ -1,104 +1,60 @@
-version: '3.8'
-
 services:
   technical-analyzer-agent:
-    build:
-      context: ./agents/01_technical_analyzer
+    build: ./agents/01_technical_analyzer
     container_name: technical-analyzer-agent
     ports:
       - "8001:8000"
-    networks:
-      - trading-network
-    restart: always
-
-  forecaster-agent:
-    build:
-      context: ./agents/08_forecaster_agent
-    container_name: forecaster-agent
-    ports:
-      - "8002:8000"
-    networks:
-      - trading-network
+    env_file: .env
     restart: always
 
   fibonacci-cyclical-agent:
-    build:
-      context: ./agents/03_fibonacci_agent
+    build: ./agents/03_fibonacci_agent
     container_name: fibonacci-cyclical-agent
     ports:
       - "8003:8000"
-    networks:
-      - trading-network
-    restart: always
-    
-  master-ai-agent:
-    build:
-      context: ./agents/04_master_ai_agent
-    container_name: master-ai-agent
     env_file: .env
-    ports:
-      - "8004:8000"
-    networks:
-      - trading-network
     restart: always
 
-  news-sentiment-agent:
-    build:
-      context: ./agents/06_news_sentiment_agent
-    container_name: news-sentiment-agent
-    env_file: .env
+  master-ai-agent:
+    build: ./agents/04_master_ai_agent
+    container_name: master-ai-agent
     ports:
-      - "8005:8000"
-    networks:
-      - trading-network
+      - "8004:8000"
+    env_file: .env
     restart: always
 
   gann-analyzer-agent:
-    build:
-      context: ./agents/05_gann_analyzer_agent
+    build: ./agents/05_gann_analyzer_agent
     container_name: gann-analyzer-agent
     ports:
+      - "8005:8000"
+    env_file: .env
+    restart: always
+
+  news-sentiment-agent:
+    build: ./agents/06_news_sentiment_agent
+    container_name: news-sentiment-agent
+    ports:
       - "8006:8000"
-    networks:
-      - trading-network
+    env_file: .env
     restart: always
 
   position-manager-agent:
-    build:
-      context: ./agents/07_position_manager
+    build: ./agents/07_position_manager
     container_name: position-manager-agent
-    env_file: .env
     ports:
       - "8007:8000"
-    networks:
-      - trading-network
-    restart: always
-
-  orchestrator:
-    build:
-      context: ./agents/orchestrator
-    container_name: orchestrator
     env_file: .env
-    networks:
-      - trading-network
     restart: always
-    depends_on:
-      - position-manager-agent
-      - master-ai-agent
 
   dashboard:
-    build:
-      context: ./agents/dashboard
+    build: ./dashboard
     container_name: dashboard
     ports:
-      - "8080:8000"
+      - "80:8080"  # MAPPIAMO LA 80 ESTERNA SULLA 8080 INTERNA
     environment:
-      - POSITION_MANAGER_URL=http://position-manager-agent:8000
-      - MASTER_AI_URL=http://master-ai-agent:8000
-    networks:
-      - trading-network
+      - PYTHONUNBUFFERED=1
+    env_file: .env
+    depends_on:
+      - position-manager-agent
     restart: always
-
-networks:
-  trading-network:
-    driver: bridge
