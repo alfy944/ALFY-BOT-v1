@@ -4,7 +4,6 @@ import os
 import logging
 from datetime import datetime
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from threading import Thread
 from pybit.unified_trading import HTTP
 
@@ -17,15 +16,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PositionManager")
 
 app = FastAPI()
-
-# --- FIX CORS (Il pezzo mancante per la Dashboard) ---
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Accetta richieste da TUTTI (Dashboard compresa)
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # MEMORIA DASHBOARD
 management_logs = [] 
@@ -132,7 +122,7 @@ def execute_trade(symbol, decision, size_pct, leverage):
                  add_log(symbol, f"Order Exception: {e}", "error")
 
 def trading_loop():
-    add_log("SYSTEM", "Bot Online (CORS ENABLED). Cycle: 15m", "success")
+    add_log("SYSTEM", "Bot Online (NUKE REBUILD). Cycle: 15m", "success")
     while True:
         try:
             market_data = {}
