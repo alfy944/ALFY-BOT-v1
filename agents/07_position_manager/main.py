@@ -9,7 +9,9 @@ from pybit.unified_trading import HTTP
 from pydantic import BaseModel
 
 # --- CONFIGURAZIONE ---
-SLEEP_INTERVAL = 900  # 15 Minuti
+SLEEP_INTERVAL = 900  # 15 Minuti (Ciclo AI Master)
+FAST_CHECK_INTERVAL = 30 # 30 Secondi (Ciclo Guardiano SL)
+
 MASTER_AI_URL = "http://master-ai-agent:8000"
 TARGET_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 
@@ -18,8 +20,12 @@ QTY_PRECISION = {"BTCUSDT": 3, "ETHUSDT": 2, "SOLUSDT": 1}
 PRICE_PRECISION = {"BTCUSDT": 1, "ETHUSDT": 2, "SOLUSDT": 3}
 
 # --- GESTIONE RISCHIO ---
-DEFAULT_SL_PERCENT = 0.02  # 2% di movimento prezzo contro
-DEFAULT_TP_PERCENT = 0.06  # 6% di movimento prezzo a favore (R:R 1:3)
+DEFAULT_SL_PERCENT = 0.02  # 2% Stop Loss iniziale
+DEFAULT_TP_PERCENT = 0.05  # 5% Take Profit iniziale (Risk:Reward 1:2.5)
+
+# --- BREAK EVEN (Pareggio Dinamico) ---
+BE_TRIGGER_PCT = 0.008 # Se il prezzo va a +0.8% a favore...
+BE_OFFSET_PCT = 0.001  # ...sposta lo SL a +0.1% (così paghiamo le commissioni)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PositionManager")
@@ -67,7 +73,8 @@ def get_wallet_data():
                         "leverage": float(p['leverage']),
                         "pnl": float(p['unrealisedPnl']),
                         "stop_loss": float(p.get('stopLoss', 0)),
-                        "take_profit": float(p.get('takeProfit', 0))
+                        "take_profit": float(p.get('takeProfit', 0)),
+                        "mark_price": float(p['markPrice'])
                     })
     except: pass
     return bal, pos
@@ -88,6 +95,62 @@ def calculate_sl_tp(entry_price, direction, sl_pct, tp_pct, precision):
         tp = entry_price * (1 - tp_pct)
     
     return round(sl, precision), round(tp, precision)
+
+# --- GUARDIANO VELOCE (Thread Parallelo) ---
+def monitor_positions():
+    """Controlla ogni 30s se dobbiamo spostare lo SL a pareggio"""
+    time.sleep(60) # Aspetta 1 minuto all'avvio
+    add_log("GUARDIAN", "Break-Even Monitor Active", "success")
+    
+    while True:
+        try:
+            _, positions = get_wallet_data()
+            
+            for p in positions:
+                sym = p['symbol']
+                side = p['side']
+                entry = p['entry_price']
+                curr_price = p['mark_price']
+                curr_sl = p['stop_loss']
+                precision = PRICE_PRECISION.get(sym, 2)
+
+                # LOGICA LONG
+                if side == "Buy":
+                    # Se il prezzo è salito sopra il trigger (es. +0.8%)
+                    target_trigger = entry * (1 + BE_TRIGGER_PCT)
+                    new_sl = round(entry * (1 + BE_OFFSET_PCT), precision)
+                    
+                    if curr_price > target_trigger:
+                        # Controlla se abbiamo già spostato lo SL (per non spammare API)
+                        # Se current SL è 0 o è minore del new_sl, lo alziamo
+                        if curr_sl == 0 or curr_sl < new_sl: 
+                            add_log(sym, f"Moving SL to Break Even (${new_sl})", "warning")
+                            try:
+                                session.set_trading_stop(category="linear", symbol=sym, stopLoss=str(new_sl), slTriggerBy="MarkPrice")
+                            except Exception as e:
+                                logger.error(f"Failed move SL {sym}: {e}")
+
+                # LOGICA SHORT
+                elif side == "Sell":
+                    # Se il prezzo è sceso sotto il trigger (es. -0.8%)
+                    target_trigger = entry * (1 - BE_TRIGGER_PCT)
+                    new_sl = round(entry * (1 - BE_OFFSET_PCT), precision)
+                    
+                    if curr_price < target_trigger:
+                        # Controlla se abbiamo già spostato lo SL
+                        # Se current SL è 0 o è maggiore del new_sl, lo abbassiamo
+                        if curr_sl == 0 or curr_sl > new_sl: 
+                            add_log(sym, f"Moving SL to Break Even (${new_sl})", "warning")
+                            try:
+                                session.set_trading_stop(category="linear", symbol=sym, stopLoss=str(new_sl), slTriggerBy="MarkPrice")
+                            except Exception as e:
+                                logger.error(f"Failed move SL {sym}: {e}")
+            
+            time.sleep(FAST_CHECK_INTERVAL)
+            
+        except Exception as e:
+            logger.error(f"Guardian Error: {e}")
+            time.sleep(60)
 
 def execute_decision(decision):
     sym = decision.get("symbol") + "USDT"
@@ -127,9 +190,7 @@ def execute_decision(decision):
         qty_prec = QTY_PRECISION.get(sym, 3)
         qty = f"{amount:.{qty_prec}f}"
         
-        # 2. Calcola SL e TP
-        # Adattiamo la percentuale alla leva: più leva = stop loss più stretto per non bruciare tutto
-        # Esempio: Leva 10 -> SL 1% (invece di 2%)
+        # 2. Calcola SL e TP Dinamici
         adjusted_sl = DEFAULT_SL_PERCENT / (lev / 2) if lev > 2 else DEFAULT_SL_PERCENT
         adjusted_tp = DEFAULT_TP_PERCENT / (lev / 2) if lev > 2 else DEFAULT_TP_PERCENT
         
@@ -170,13 +231,13 @@ def trading_cycle():
                 "portfolio": {"balance_usd": bal, "open_positions": pos}
             }
             
-            add_log("AI", "Calling Rizzo Master Brain (Batch)...", "info")
+            add_log("AI", "Calling Mitragliere Master Brain...", "info")
             resp = requests.post(f"{MASTER_AI_URL}/execute_batch_strategy", json=payload, timeout=180)
             
             if resp.status_code == 200:
                 data = resp.json()
                 trades = data.get("trades", []) 
-                if not trades: add_log("AI", "Rizzo says: NO TRADES for now.", "info")
+                if not trades: add_log("AI", "Mitragliere says: HOLD position.", "info")
                 for trade in trades: execute_decision(trade)
             else:
                 add_log("AI", f"API Error: {resp.status_code}", "error")
@@ -190,7 +251,9 @@ def trading_cycle():
 
 @app.on_event("startup")
 def startup():
+    # Avviamo DUE thread: uno per l'AI (lento) e uno per il Guardiano (veloce)
     Thread(target=trading_cycle, daemon=True).start()
+    Thread(target=monitor_positions, daemon=True).start()
 
 # --- ENDPOINTS API ---
 @app.get("/health")
