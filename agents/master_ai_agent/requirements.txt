@@ -1,5 +1,0 @@
-fastapi
-uvicorn
-pydantic
-requests
-openai>=1.40.0
