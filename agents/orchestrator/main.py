@@ -11,6 +11,7 @@ SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 # --- CONFIGURAZIONE OTTIMIZZAZIONE ---
 MAX_POSITIONS = 3  # Numero massimo posizioni contemporanee
 REVERSE_THRESHOLD = 2.0  # Percentuale perdita per trigger reverse analysis
+CYCLE_INTERVAL = 60  # Secondi tra ogni ciclo di controllo (era 900)
 
 async def manage_cycle():
     async with httpx.AsyncClient() as c:
@@ -76,7 +77,11 @@ async def analysis_cycle():
                     print(f"        ⚠️ {pos_loss['symbol']} perde {pos_loss['loss_pct']:.2f}%")
                 
                 # TODO: Implementare logica reverse per chiudere/invertire posizioni in perdita
-                # Per ora monitoriamo solo, il trailing stop gestirà l'uscita
+                # Opzioni possibili:
+                # 1. Chiudere la posizione in perdita
+                # 2. Chiamare DeepSeek per analisi reverse (chiudere + aprire posizione opposta)
+                # 3. Ridurre leverage o size della posizione
+                # Per ora monitoriamo solo, il trailing stop gestirà l'uscita automatica
                 print(f"        ⚠️ {len(positions_losing)} posizione(i) in perdita critica rilevata(e)")
             else:
                 # Nessuna posizione in perdita critica
@@ -148,7 +153,7 @@ async def main_loop():
     while True:
         await manage_cycle()
         await analysis_cycle()
-        await asyncio.sleep(60)  # Ciclo ogni 60 secondi invece di 900
+        await asyncio.sleep(CYCLE_INTERVAL)
 
 if __name__ == "__main__":
     asyncio.run(main_loop())
