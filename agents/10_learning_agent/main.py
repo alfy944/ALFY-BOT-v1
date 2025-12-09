@@ -102,7 +102,7 @@ def get_recent_trades(hours: int = 48) -> List[Dict[str, Any]]:
             trade_time = datetime.fromisoformat(trade.get('timestamp', ''))
             if trade_time >= cutoff_time:
                 recent_trades.append(trade)
-        except:
+        except (ValueError, TypeError):
             continue
     
     return recent_trades
@@ -391,7 +391,7 @@ Respond ONLY with valid JSON in this format:
         try:
             suggestion_data = json.loads(suggestions)
             reasoning = suggestion_data.get("reasoning", "No reasoning provided")
-        except:
+        except (json.JSONDecodeError, TypeError):
             reasoning = "Could not parse reasoning"
         
         logger.info(f"💡 DeepSeek suggests:")
