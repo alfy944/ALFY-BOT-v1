@@ -24,6 +24,7 @@ EVOLVED_PARAMS_FILE = f"{DATA_DIR}/evolved_params.json"
 TRADING_HISTORY_FILE = f"{DATA_DIR}/trading_history.json"
 EVOLUTION_LOG_FILE = f"{DATA_DIR}/evolution_log.json"
 STRATEGY_ARCHIVE_DIR = f"{DATA_DIR}/strategy_archive"
+API_COSTS_FILE = f"{DATA_DIR}/api_costs.json"
 
 # Default parameters
 DEFAULT_PARAMS = {
@@ -41,6 +42,40 @@ DEFAULT_PARAMS = {
 # OpenAI client for DeepSeek
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
+
+def log_api_call(tokens_in: int, tokens_out: int):
+    """
+    Logga una chiamata API per il tracking dei costi DeepSeek.
+    
+    Args:
+        tokens_in: Token input della richiesta
+        tokens_out: Token output della risposta
+    """
+    try:
+        # Carica i dati esistenti
+        if os.path.exists(API_COSTS_FILE):
+            with open(API_COSTS_FILE, 'r') as f:
+                data = json.load(f)
+        else:
+            data = {'calls': []}
+        
+        # Aggiungi la nuova chiamata
+        data['calls'].append({
+            'timestamp': datetime.now().isoformat(),
+            'tokens_in': tokens_in,
+            'tokens_out': tokens_out
+        })
+        
+        # Salva i dati aggiornati
+        os.makedirs(os.path.dirname(API_COSTS_FILE), exist_ok=True)
+        with open(API_COSTS_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+        
+        logger.info(f"API call logged: {tokens_in} in, {tokens_out} out")
+    except Exception as e:
+        logger.error(f"Error logging API call: {e}")
+
 
 
 class TradeRecord(BaseModel):
@@ -180,6 +215,14 @@ async def call_deepseek(prompt: str) -> str:
             response_format={"type": "json_object"},
             temperature=0.7,
         )
+        
+        # Logga i costi API per tracking DeepSeek
+        if hasattr(response, 'usage') and response.usage:
+            log_api_call(
+                tokens_in=response.usage.prompt_tokens,
+                tokens_out=response.usage.completion_tokens
+            )
+        
         return response.choices[0].message.content
     except Exception as e:
         logger.error(f"DeepSeek API error: {e}")

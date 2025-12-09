@@ -67,7 +67,9 @@ class BybitClient:
                         'Side': trade.get('side'),
                         'Closed PnL': float(trade.get('closedPnl')),
                         'Exit Time': datetime.fromtimestamp(int(trade.get('updatedTime'))/1000).strftime('%Y-%m-%d %H:%M:%S'),
-                        'ts': int(trade.get('updatedTime'))
+                        'ts': int(trade.get('updatedTime')),
+                        'exec_fee': abs(self.safe_float(trade.get('cumExecFee', 0))),  # Fee totale per il trade
+                        'fee': abs(self.safe_float(trade.get('cumExecFee', 0)))  # Alias per compatibilità
                     })
                 closed.sort(key=lambda x: x['ts'], reverse=True)
                 return closed

@@ -1,0 +1,119 @@
+"""
+Component per tracciare e visualizzare costi API DeepSeek
+"""
+import streamlit as st
+import json
+import os
+from datetime import datetime, timedelta
+from typing import Dict
+
+
+# Path del file di log dei costi API
+API_COSTS_FILE = "/app/data/api_costs.json"
+
+# DeepSeek pricing (basato su pricing pubblico DeepSeek)
+DEEPSEEK_INPUT_COST = 0.14 / 1_000_000  # $0.14 per 1M tokens input
+DEEPSEEK_OUTPUT_COST = 0.28 / 1_000_000  # $0.28 per 1M tokens output
+
+
+def load_api_costs():
+    """Carica i dati dei costi API dal file JSON"""
+    if os.path.exists(API_COSTS_FILE):
+        try:
+            with open(API_COSTS_FILE, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading API costs: {e}")
+            return {'calls': []}
+    return {'calls': []}
+
+
+@st.cache_data(ttl=3600)  # Cache 1 ora
+def calculate_api_costs() -> Dict[str, Dict[str, float]]:
+    """
+    Calcola i costi API aggregati per periodo.
+    
+    Returns:
+        Dict con struttura:
+        {
+            'today': {'cost': float, 'calls': int},
+            'week': {'cost': float, 'calls': int},
+            'month': {'cost': float, 'calls': int},
+            'total': {'cost': float, 'calls': int}
+        }
+    """
+    data = load_api_costs()
+    calls = data.get('calls', [])
+    
+    now = datetime.now()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = today_start - timedelta(days=today_start.weekday())
+    month_start = today_start.replace(day=1)
+    
+    costs = {
+        'today': {'cost': 0.0, 'calls': 0},
+        'week': {'cost': 0.0, 'calls': 0},
+        'month': {'cost': 0.0, 'calls': 0},
+        'total': {'cost': 0.0, 'calls': 0}
+    }
+    
+    for call in calls:
+        try:
+            call_time = datetime.fromisoformat(call['timestamp'])
+            cost = (call['tokens_in'] * DEEPSEEK_INPUT_COST + 
+                    call['tokens_out'] * DEEPSEEK_OUTPUT_COST)
+            
+            costs['total']['cost'] += cost
+            costs['total']['calls'] += 1
+            
+            if call_time >= month_start:
+                costs['month']['cost'] += cost
+                costs['month']['calls'] += 1
+            if call_time >= week_start:
+                costs['week']['cost'] += cost
+                costs['week']['calls'] += 1
+            if call_time >= today_start:
+                costs['today']['cost'] += cost
+                costs['today']['calls'] += 1
+        except Exception as e:
+            print(f"Error processing API call: {e}")
+            continue
+    
+    return costs
+
+
+def render_api_costs_section():
+    """Renderizza la sezione costi API DeepSeek"""
+    st.markdown('<div class="section-title">🤖 Costi API DeepSeek</div>', unsafe_allow_html=True)
+    
+    costs = calculate_api_costs()
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric(
+            "Oggi", 
+            f"${costs['today']['cost']:.3f}",
+            f"{costs['today']['calls']} chiamate"
+        )
+    
+    with col2:
+        st.metric(
+            "Settimana", 
+            f"${costs['week']['cost']:.2f}",
+            f"{costs['week']['calls']} chiamate"
+        )
+    
+    with col3:
+        st.metric(
+            "Mese", 
+            f"${costs['month']['cost']:.2f}",
+            f"{costs['month']['calls']} chiamate"
+        )
+    
+    with col4:
+        st.metric(
+            "Totale", 
+            f"${costs['total']['cost']:.2f}",
+            f"{costs['total']['calls']} chiamate"
+        )
