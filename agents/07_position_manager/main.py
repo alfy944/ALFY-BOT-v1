@@ -185,16 +185,21 @@ def check_ai_review_for_losing_positions():
             if entry_price == 0:
                 continue
             
-            # Calcola ROI
+            # Ottieni leva
+            leverage = float(p.get('leverage') or 1)
+            
+            # Calcola ROI con leva (come mostrato su Bybit)
             is_long = side in ['long', 'buy']
             if is_long:
-                roi = (mark_price - entry_price) / entry_price
+                roi_raw = (mark_price - entry_price) / entry_price
             else:
-                roi = (entry_price - mark_price) / entry_price
+                roi_raw = (entry_price - mark_price) / entry_price
+            
+            roi = roi_raw * leverage  # ROI con leva
             
             # Se in perdita > threshold, chiedi a AI
             if roi < -AI_REVIEW_LOSS_THRESHOLD:
-                print(f"🔍 AI REVIEW: {symbol} {side.upper()} ROI={roi*100:.2f}% - Chiedo a Master AI...")
+                print(f"🔍 AI REVIEW: {symbol} {side.upper()} ROI={roi*100:.2f}% (leva {leverage}x) - Chiedo a Master AI...")
                 
                 try:
                     response = requests.post(
