@@ -9,6 +9,8 @@ from typing import Dict
 
 
 # Path del file di log dei costi API
+# Nota: Usa /app/data/ perché il container dashboard accede al volume shared_data
+# montato in /app/data/, mentre gli agent containers usano /data/
 API_COSTS_FILE = "/app/data/api_costs.json"
 
 # DeepSeek pricing (basato su pricing pubblico DeepSeek)
@@ -93,7 +95,7 @@ def render_api_costs_section():
     with col1:
         st.metric(
             "Oggi", 
-            f"${costs['today']['cost']:.3f}",
+            f"${costs['today']['cost']:.2f}",
             f"{costs['today']['calls']} chiamate"
         )
     

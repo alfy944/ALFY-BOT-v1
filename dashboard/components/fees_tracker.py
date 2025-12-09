@@ -12,6 +12,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from bybit_client import BybitClient
 
 
+def safe_float(value, default=0.0):
+    """Conversione sicura a float"""
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
 @st.cache_data(ttl=3600)  # Cache 1 ora
 def get_trading_fees() -> Dict[str, float]:
     """
@@ -34,19 +44,21 @@ def get_trading_fees() -> Dict[str, float]:
         fees = {'today': 0.0, 'week': 0.0, 'month': 0.0, 'total': 0.0}
         
         for trade in all_trades:
-            # Le commissioni sono nel campo closedPnl breakdown o possiamo stimarle
-            # Bybit carica ~0.055% per maker e ~0.06% per taker
-            # Usiamo una stima basata sul valore della posizione se non abbiamo il campo fee esplicito
-            fee = 0
+            # Le commissioni sono nel campo closedPnl breakdown
+            fee = 0.0
             
-            # Se abbiamo il campo exec_fee lo usiamo
-            if 'exec_fee' in trade:
-                fee = abs(float(trade.get('exec_fee', 0)))
-            elif 'fee' in trade:
-                fee = abs(float(trade.get('fee', 0)))
-            else:
-                # Stima: ~0.06% del valore della posizione
-                # Calcoliamo dal PnL e prezzo medio se disponibile
+            # Prova a ottenere il fee da diversi campi possibili
+            if 'exec_fee' in trade and trade['exec_fee'] is not None:
+                fee = abs(safe_float(trade.get('exec_fee', 0)))
+            elif 'fee' in trade and trade['fee'] is not None:
+                fee = abs(safe_float(trade.get('fee', 0)))
+            
+            # Se non abbiamo fee esplicito, stimiamo basandoci sul valore della posizione
+            # Bybit carica ~0.055% per maker e ~0.06% per taker (media ~0.0575%)
+            if fee == 0.0:
+                closed_pnl = safe_float(trade.get('Closed PnL', 0))
+                # Stima molto conservativa: assumiamo fee dello 0.06% sul valore totale
+                # (il closed PnL è solo la differenza, non il valore totale, quindi skippiamo)
                 continue
             
             trade_time = datetime.fromtimestamp(trade.get('ts', 0) / 1000)
