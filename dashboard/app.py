@@ -13,6 +13,10 @@ from components.fees_tracker import render_fees_section, get_trading_fees
 from components.api_costs import render_api_costs_section, calculate_api_costs
 import numpy as np
 
+# --- COSTANTI ---
+DEFAULT_INITIAL_CAPITAL = 1000  # Capital iniziale di default per calcoli ROI
+TRADING_DAYS_PER_YEAR = 252     # Giorni di trading annuali per Sharpe Ratio
+
 # --- CONFIGURAZIONE ---
 st.set_page_config(
     layout="wide", 
@@ -750,12 +754,12 @@ with tab2:
         max_drawdown_pct = (max_drawdown / running_max.max() * 100) if running_max.max() > 0 else 0
         
         # ROI totale (assumendo capital iniziale come max equity - total pnl)
-        initial_capital = max(1000, equity - total_pnl) if wallet else 1000
+        initial_capital = max(DEFAULT_INITIAL_CAPITAL, equity - total_pnl) if wallet else DEFAULT_INITIAL_CAPITAL
         roi_pct = (total_pnl / initial_capital * 100) if initial_capital > 0 else 0
         
         # Sharpe Ratio (stima semplificata: media/std dei trade)
         sharpe_ratio = (df_hist['Closed PnL'].mean() / df_hist['Closed PnL'].std()) if df_hist['Closed PnL'].std() > 0 else 0
-        sharpe_ratio_annualized = sharpe_ratio * np.sqrt(252)  # Annualizzato
+        sharpe_ratio_annualized = sharpe_ratio * np.sqrt(TRADING_DAYS_PER_YEAR)  # Annualizzato
         
         # Average Trade Duration (placeholder - non abbiamo dati di entry time)
         avg_duration = "N/A"

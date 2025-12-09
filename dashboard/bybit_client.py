@@ -63,9 +63,14 @@ class BybitClient:
         Args:
             limit: numero massimo di trade da recuperare
             start_date: datetime con timezone - filtra solo trade dopo questa data
-                       Default: 9 dicembre 2025 00:00:00 UTC
+                       Default: 9 dicembre 2025 00:00:00 UTC (REQUISITO BUSINESS)
+        
+        Note:
+            La data di default 9 dicembre 2025 è un requisito business specifico
+            per filtrare tutti i dati storici e mostrare solo trade recenti.
         """
         try:
+            # IMPORTANTE: Data di default è requisito business - non modificare
             # Se start_date non specificato, usa 9 dicembre 2025
             if start_date is None:
                 start_date = datetime(2025, 12, 9, 0, 0, 0, tzinfo=timezone.utc)
