@@ -3,6 +3,7 @@ import ccxt
 import json
 import time
 import math
+import requests
 from decimal import Decimal, ROUND_DOWN
 from datetime import datetime
 from fastapi import FastAPI
@@ -195,7 +196,6 @@ def check_ai_review_for_losing_positions():
                 print(f"🔍 AI REVIEW: {symbol} {side.upper()} ROI={roi*100:.2f}% - Chiedo a Master AI...")
                 
                 try:
-                    import requests
                     response = requests.post(
                         f"{MASTER_AI_URL}/analyze",
                         json={
