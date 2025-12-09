@@ -1,4 +1,7 @@
-import asyncio, httpx, json
+import os
+import asyncio
+import httpx
+import json
 from datetime import datetime
 
 URLS = {
@@ -13,8 +16,6 @@ SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 ENABLE_REVERSE = True
 REVERSE_LOSS_THRESHOLD_PCT = float(os.getenv('REVERSE_LOSS_THRESHOLD_PCT', '2.0'))
 REVERSE_RECOVERY_MULTIPLIER = float(os.getenv('REVERSE_RECOVERY_MULTIPLIER', '1.5'))
-
-import os
 
 async def check_reverse_opportunities():
     """Check if any open positions need to be reversed due to losses"""
