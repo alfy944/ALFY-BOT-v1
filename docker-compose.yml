@@ -56,6 +56,8 @@ services:
       - "8007:8000"
     env_file: .env
     restart: always
+    volumes:
+      - ./data:/app/data
     networks:
       - trading-network
 
@@ -66,6 +68,18 @@ services:
       - "8008:8000"
     env_file: .env
     restart: always
+    networks:
+      - trading-network
+
+  10_learning_agent:
+    build: ./agents/10_learning_agent
+    container_name: 10_learning_agent
+    ports:
+      - "8010:8000"
+    env_file: .env
+    restart: always
+    volumes:
+      - ./data:/app/data
     networks:
       - trading-network
 
