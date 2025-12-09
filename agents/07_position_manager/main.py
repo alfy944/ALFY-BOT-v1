@@ -22,6 +22,11 @@ TRAILING_ACTIVATION_PCT = 0.018  # Attiva se profitto > 1.8%
 TRAILING_DISTANCE_PCT = 0.010    # Mantieni stop a 1% di distanza
 DEFAULT_INITIAL_SL_PCT = 0.04    # Stop Loss Iniziale
 
+# --- PARAMETRI AI REVIEW ---
+ENABLE_AI_REVIEW = os.getenv("ENABLE_AI_REVIEW", "true").lower() == "true"
+AI_REVIEW_LOSS_THRESHOLD = 0.03  # Attiva review se perdita > 3%
+MASTER_AI_URL = os.getenv("MASTER_AI_URL", "http://04_master_ai_agent:8000")
+
 file_lock = Lock()
 
 exchange = None
@@ -157,6 +162,83 @@ def check_and_update_trailing_stops():
     except Exception as e:
         print(f"⚠️ Trailing logic error: {e}")
 
+# --- AI REVIEW LOGIC ---
+def check_ai_review_for_losing_positions():
+    """Chiede a Master AI cosa fare con posizioni in perdita > 3%"""
+    if not ENABLE_AI_REVIEW or not exchange:
+        return
+    
+    try:
+        positions = exchange.fetch_positions(None, params={'category': 'linear'})
+        
+        for p in positions:
+            size = float(p.get('contracts') or 0)
+            if size == 0:
+                continue
+            
+            symbol = p.get('symbol', '')
+            entry_price = float(p.get('entryPrice') or 0)
+            mark_price = float(p.get('markPrice') or 0)
+            side = p.get('side', '').lower()
+            
+            if entry_price == 0:
+                continue
+            
+            # Calcola ROI
+            if side == 'long':
+                roi = (mark_price - entry_price) / entry_price
+            else:
+                roi = (entry_price - mark_price) / entry_price
+            
+            # Se in perdita > threshold, chiedi a AI
+            if roi < -AI_REVIEW_LOSS_THRESHOLD:
+                print(f"🔍 AI REVIEW: {symbol} {side.upper()} ROI={roi*100:.2f}% - Chiedo a Master AI...")
+                
+                try:
+                    import requests
+                    response = requests.post(
+                        f"{MASTER_AI_URL}/analyze",
+                        json={
+                            "symbol": symbol.replace("/", "").replace(":USDT", ""),
+                            "current_position": {
+                                "side": side,
+                                "entry_price": entry_price,
+                                "mark_price": mark_price,
+                                "roi_pct": roi,
+                                "size": size
+                            },
+                            "request_type": "position_review"
+                        },
+                        timeout=30
+                    )
+                    
+                    if response.status_code == 200:
+                        decision = response.json()
+                        action = decision.get("action", "HOLD")
+                        rationale = decision.get("rationale", "No rationale")
+                        
+                        print(f"🤖 AI DECISION for {symbol}: {action}")
+                        print(f"   Rationale: {rationale}")
+                        
+                        if action == "CLOSE":
+                            print(f"⚠️ AI suggests CLOSE for {symbol} - Manual action required")
+                            # Non chiudiamo automaticamente per sicurezza
+                        elif action == "REVERSE":
+                            print(f"⚠️ AI suggests REVERSE for {symbol} - Manual action required")
+                            # Non reversiamo automaticamente per sicurezza
+                        else:
+                            print(f"✅ AI suggests HOLD for {symbol} - Keeping position")
+                    else:
+                        print(f"⚠️ AI Review failed for {symbol}: HTTP {response.status_code} - Defaulting to HOLD")
+                        
+                except requests.exceptions.Timeout:
+                    print(f"⚠️ AI Review timeout for {symbol} - Defaulting to HOLD")
+                except Exception as e:
+                    print(f"⚠️ AI Review error for {symbol}: {e} - Defaulting to HOLD")
+                    
+    except Exception as e:
+        print(f"⚠️ AI Review system error: {e}")
+
 # --- API ENDPOINTS ---
 @app.get("/get_wallet_balance")
 def get_balance():
@@ -279,4 +361,5 @@ def close_position(req: CloseRequest): return {"status": "manual_only"}
 @app.post("/manage_active_positions")
 def manage():
     check_and_update_trailing_stops()
+    check_ai_review_for_losing_positions()
     return {"status": "ok"}
