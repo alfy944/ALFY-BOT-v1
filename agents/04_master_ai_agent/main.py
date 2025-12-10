@@ -328,13 +328,15 @@ async def analyze_reverse(payload: ReverseAnalysisRequest):
         
         # Calcola recovery size usando la formula specificata
         pnl_dollars = position.get('pnl_dollars', 0)
-        # Stima wallet balance (in produzione verrà passato o recuperato)
-        # Per ora usiamo una stima basata sulla size e leverage
-        estimated_wallet = abs(pnl_dollars) * 3  # Stima conservativa
+        wallet_balance = position.get('wallet_balance', 0)
+        
+        # Se non abbiamo wallet_balance, usa una stima conservativa
+        if wallet_balance == 0:
+            wallet_balance = abs(pnl_dollars) * 3
         
         base_size_pct = 0.15
         loss_amount = abs(pnl_dollars)
-        recovery_extra = (loss_amount / max(estimated_wallet, 100)) / 0.02
+        recovery_extra = (loss_amount / max(wallet_balance, 100)) / 0.02
         recovery_size_pct = min(base_size_pct + recovery_extra, 0.25)
         
         # Prepara prompt per DeepSeek

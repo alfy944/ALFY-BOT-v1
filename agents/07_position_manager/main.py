@@ -372,7 +372,8 @@ def check_smart_reverse():
                     "roi_pct": roi,
                     "size": size,
                     "pnl_dollars": pnl_dollars,
-                    "leverage": leverage
+                    "leverage": leverage,
+                    "wallet_balance": wallet_balance
                 }
                 
                 analysis = request_reverse_analysis(symbol, position_data)
@@ -411,7 +412,8 @@ def check_smart_reverse():
                     "roi_pct": roi,
                     "size": size,
                     "pnl_dollars": pnl_dollars,
-                    "leverage": leverage
+                    "leverage": leverage,
+                    "wallet_balance": wallet_balance
                 }
                 
                 analysis = request_reverse_analysis(symbol, position_data)
