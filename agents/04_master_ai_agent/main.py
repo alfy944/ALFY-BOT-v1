@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import httpx
 from datetime import datetime
 from fastapi import FastAPI
 from pydantic import BaseModel, field_validator
@@ -13,6 +14,15 @@ logger = logging.getLogger("MasterAI")
 app = FastAPI()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY)
+
+# Agent URLs for reverse analysis
+AGENT_URLS = {
+    "technical": "http://01_technical_analyzer:8000",
+    "fibonacci": "http://03_fibonacci_agent:8000",
+    "gann": "http://05_gann_analyzer_agent:8000",
+    "news": "http://06_news_sentiment_agent:8000",
+    "forecaster": "http://08_forecaster_agent:8000"
+}
 
 # Default parameters (fallback)
 DEFAULT_PARAMS = {
@@ -113,6 +123,10 @@ class Decision(BaseModel):
 class AnalysisPayload(BaseModel):
     global_data: Dict[str, Any]
     assets_data: Dict[str, Any]
+
+class ReverseAnalysisRequest(BaseModel):
+    symbol: str
+    current_position: Dict[str, Any]
 
 
 def get_evolved_params() -> Dict[str, Any]:
@@ -244,6 +258,209 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
     except Exception as e:
         logger.error(f"AI Critical Error: {e}")
         return {"analysis": "Error", "decisions": []}
+
+
+@app.post("/analyze_reverse")
+async def analyze_reverse(payload: ReverseAnalysisRequest):
+    """
+    Analizza posizione in perdita e decide: HOLD, CLOSE o REVERSE
+    Raccoglie dati da tutti gli agenti per decisione informata
+    """
+    try:
+        symbol = payload.symbol
+        position = payload.current_position
+        
+        logger.info(f"🔍 Analyzing reverse for {symbol}: ROI={position.get('roi_pct', 0)*100:.2f}%")
+        
+        # Raccolta dati da tutti gli agenti
+        agents_data = {}
+        
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Technical Analysis
+            try:
+                resp = await client.get(f"{AGENT_URLS['technical']}/analyze/{symbol}")
+                if resp.status_code == 200:
+                    agents_data['technical'] = resp.json()
+                    logger.info(f"✅ Technical data received for {symbol}")
+            except Exception as e:
+                logger.warning(f"⚠️ Technical analyzer failed: {e}")
+                agents_data['technical'] = {}
+            
+            # Fibonacci Analysis
+            try:
+                resp = await client.get(f"{AGENT_URLS['fibonacci']}/analyze/{symbol}")
+                if resp.status_code == 200:
+                    agents_data['fibonacci'] = resp.json()
+                    logger.info(f"✅ Fibonacci data received for {symbol}")
+            except Exception as e:
+                logger.warning(f"⚠️ Fibonacci analyzer failed: {e}")
+                agents_data['fibonacci'] = {}
+            
+            # Gann Analysis
+            try:
+                resp = await client.get(f"{AGENT_URLS['gann']}/analyze/{symbol}")
+                if resp.status_code == 200:
+                    agents_data['gann'] = resp.json()
+                    logger.info(f"✅ Gann data received for {symbol}")
+            except Exception as e:
+                logger.warning(f"⚠️ Gann analyzer failed: {e}")
+                agents_data['gann'] = {}
+            
+            # News Sentiment
+            try:
+                resp = await client.get(f"{AGENT_URLS['news']}/sentiment/{symbol}")
+                if resp.status_code == 200:
+                    agents_data['news'] = resp.json()
+                    logger.info(f"✅ News sentiment received for {symbol}")
+            except Exception as e:
+                logger.warning(f"⚠️ News analyzer failed: {e}")
+                agents_data['news'] = {}
+            
+            # Forecaster
+            try:
+                resp = await client.get(f"{AGENT_URLS['forecaster']}/forecast/{symbol}")
+                if resp.status_code == 200:
+                    agents_data['forecaster'] = resp.json()
+                    logger.info(f"✅ Forecast data received for {symbol}")
+            except Exception as e:
+                logger.warning(f"⚠️ Forecaster failed: {e}")
+                agents_data['forecaster'] = {}
+        
+        # Calcola recovery size usando la formula specificata
+        pnl_dollars = position.get('pnl_dollars', 0)
+        # Stima wallet balance (in produzione verrà passato o recuperato)
+        # Per ora usiamo una stima basata sulla size e leverage
+        estimated_wallet = abs(pnl_dollars) * 3  # Stima conservativa
+        
+        base_size_pct = 0.15
+        loss_amount = abs(pnl_dollars)
+        recovery_extra = (loss_amount / max(estimated_wallet, 100)) / 0.02
+        recovery_size_pct = min(base_size_pct + recovery_extra, 0.25)
+        
+        # Prepara prompt per DeepSeek
+        prompt_data = {
+            "symbol": symbol,
+            "current_position": {
+                "side": position.get('side'),
+                "entry_price": position.get('entry_price'),
+                "mark_price": position.get('mark_price'),
+                "roi_pct": position.get('roi_pct', 0) * 100,  # Converti in percentuale
+                "pnl_dollars": pnl_dollars,
+                "leverage": position.get('leverage', 1)
+            },
+            "technical_analysis": agents_data.get('technical', {}),
+            "fibonacci_analysis": agents_data.get('fibonacci', {}),
+            "gann_analysis": agents_data.get('gann', {}),
+            "news_sentiment": agents_data.get('news', {}),
+            "forecast": agents_data.get('forecaster', {})
+        }
+        
+        system_prompt = """Sei un TRADER ESPERTO che analizza posizioni in perdita.
+
+DECISIONI POSSIBILI:
+1. HOLD = È solo una correzione temporanea, il trend principale rimane valido. Mantieni la posizione.
+2. CLOSE = Il trend è incerto, meglio chiudere e aspettare chiarezza. Non aprire nuove posizioni.
+3. REVERSE = CHIARA INVERSIONE DI TREND confermata da MULTIPLI INDICATORI. Chiudi e apri posizione opposta.
+
+CRITERI PER REVERSE (TUTTI devono essere soddisfatti):
+- Almeno 3 indicatori tecnici confermano inversione
+- RSI mostra chiaro over/undersold nella direzione opposta
+- Fibonacci/Gann mostrano supporto/resistenza forte
+- News/sentiment supportano la nuova direzione
+- Forecast prevede movimento nella direzione opposta
+
+CRITERI PER CLOSE:
+- Indicatori contrastanti, no chiara direzione
+- Alta volatilità o incertezza di mercato
+- News negative o sentiment molto negativo
+
+CRITERI PER HOLD:
+- Trend principale ancora valido
+- Solo correzione temporanea
+- Supporti/resistenze tengono
+- Indicatori mostrano possibile rimbalzo
+
+FORMATO RISPOSTA JSON OBBLIGATORIO:
+{
+  "action": "HOLD" | "CLOSE" | "REVERSE",
+  "confidence": 85,
+  "rationale": "Spiegazione dettagliata basata sugli indicatori",
+  "recovery_size_pct": 0.18
+}
+
+Usa recovery_size_pct fornito nel contesto per recuperare le perdite."""
+        
+        user_prompt = f"""ANALIZZA QUESTA POSIZIONE IN PERDITA E DECIDI:
+
+{json.dumps(prompt_data, indent=2)}
+
+Recovery size calcolato: {recovery_size_pct:.2f} ({recovery_size_pct*100:.1f}%)
+
+Analizza TUTTI gli indicatori e decidi: HOLD, CLOSE o REVERSE."""
+        
+        response = client.chat.completions.create(
+            model="gpt-5.1",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.3  # Più conservativo per decisioni di risk management
+        )
+        
+        # Log API costs
+        if hasattr(response, 'usage') and response.usage:
+            log_api_call(
+                tokens_in=response.usage.prompt_tokens,
+                tokens_out=response.usage.completion_tokens
+            )
+        
+        content = response.choices[0].message.content
+        logger.info(f"AI Reverse Analysis Response: {content}")
+        
+        decision = json.loads(content)
+        
+        # Valida e normalizza la risposta
+        action = decision.get("action", "HOLD").upper()
+        if action not in ["HOLD", "CLOSE", "REVERSE"]:
+            action = "HOLD"
+        
+        confidence = max(0, min(100, decision.get("confidence", 50)))
+        rationale = decision.get("rationale", "No rationale provided")
+        
+        # Usa recovery_size_pct dal decision se presente, altrimenti quello calcolato
+        final_recovery_size = decision.get("recovery_size_pct", recovery_size_pct)
+        final_recovery_size = max(0.05, min(0.25, final_recovery_size))
+        
+        result = {
+            "action": action,
+            "confidence": confidence,
+            "rationale": rationale,
+            "recovery_size_pct": final_recovery_size,
+            "agents_data_summary": {
+                "technical_available": bool(agents_data.get('technical')),
+                "fibonacci_available": bool(agents_data.get('fibonacci')),
+                "gann_available": bool(agents_data.get('gann')),
+                "news_available": bool(agents_data.get('news')),
+                "forecast_available": bool(agents_data.get('forecaster'))
+            }
+        }
+        
+        logger.info(f"✅ Reverse analysis complete for {symbol}: {action} (confidence: {confidence}%)")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Reverse analysis error: {e}")
+        # Default safe response
+        return {
+            "action": "HOLD",
+            "confidence": 0,
+            "rationale": f"Error during analysis: {str(e)}. Defaulting to HOLD for safety.",
+            "recovery_size_pct": 0.15,
+            "agents_data_summary": {}
+        }
+
 
 @app.get("/health")
 def health(): return {"status": "active"}

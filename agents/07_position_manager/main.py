@@ -28,6 +28,14 @@ ENABLE_AI_REVIEW = os.getenv("ENABLE_AI_REVIEW", "true").lower() == "true"
 AI_REVIEW_LOSS_THRESHOLD = 0.03  # Attiva review se perdita > 3%
 MASTER_AI_URL = os.getenv("MASTER_AI_URL", "http://04_master_ai_agent:8000")
 
+# --- SMART REVERSE THRESHOLDS ---
+WARNING_THRESHOLD = -0.08
+AI_REVIEW_THRESHOLD = -0.12
+REVERSE_THRESHOLD = -0.15
+HARD_STOP_THRESHOLD = -0.20
+REVERSE_COOLDOWN_MINUTES = 30
+reverse_cooldown_tracker = {}
+
 file_lock = Lock()
 
 exchange = None
@@ -163,14 +171,153 @@ def check_and_update_trailing_stops():
     except Exception as e:
         print(f"⚠️ Trailing logic error: {e}")
 
-# --- AI REVIEW LOGIC ---
-def check_ai_review_for_losing_positions():
-    """Chiede a Master AI cosa fare con posizioni in perdita > 3%"""
+# --- SMART REVERSE SYSTEM ---
+
+def request_reverse_analysis(symbol, position_data):
+    """Chiama Master AI per analisi reverse"""
+    try:
+        response = requests.post(
+            f"{MASTER_AI_URL}/analyze_reverse",
+            json={
+                "symbol": symbol.replace("/", "").replace(":USDT", ""),
+                "current_position": position_data
+            },
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(f"⚠️ Reverse analysis failed: HTTP {response.status_code}")
+            return None
+            
+    except requests.exceptions.Timeout:
+        print(f"⚠️ Reverse analysis timeout for {symbol}")
+        return None
+    except Exception as e:
+        print(f"⚠️ Reverse analysis error: {e}")
+        return None
+
+
+def execute_close_position(symbol):
+    """Chiude una posizione esistente"""
+    if not exchange:
+        return False
+    
+    try:
+        # Ottieni la posizione corrente
+        positions = exchange.fetch_positions([symbol], params={'category': 'linear'})
+        position = None
+        for p in positions:
+            if float(p.get('contracts') or 0) > 0:
+                position = p
+                break
+        
+        if not position:
+            print(f"⚠️ Nessuna posizione aperta per {symbol}")
+            return False
+        
+        # Chiudi la posizione
+        size = float(position.get('contracts'))
+        side = position.get('side', '').lower()
+        close_side = 'sell' if side in ['long', 'buy'] else 'buy'
+        
+        print(f"🔒 Chiudo posizione {symbol}: {side} size={size}")
+        
+        exchange.create_order(
+            symbol, 'market', close_side, size,
+            params={'category': 'linear', 'reduceOnly': True}
+        )
+        
+        print(f"✅ Posizione {symbol} chiusa con successo")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Errore chiusura posizione {symbol}: {e}")
+        return False
+
+
+def execute_reverse(symbol, current_side, recovery_size_pct):
+    """Chiude posizione corrente e apre posizione opposta con size di recupero"""
+    if not exchange:
+        return False
+    
+    try:
+        # 1. Chiudi posizione corrente
+        if not execute_close_position(symbol):
+            return False
+        
+        time.sleep(1)  # Breve pausa per assicurarsi che la chiusura sia processata
+        
+        # 2. Calcola nuova posizione opposta
+        new_side = 'sell' if current_side in ['long', 'buy'] else 'buy'
+        
+        # 3. Ottieni balance e prezzo
+        bal = exchange.fetch_balance(params={'type': 'swap'})
+        free_balance = float(bal['USDT']['free'])
+        price = float(exchange.fetch_ticker(symbol)['last'])
+        
+        # 4. Calcola size con recovery_size_pct
+        cost = max(free_balance * recovery_size_pct, 10.0)
+        leverage = 5.0  # Leva standard per reverse
+        
+        # 5. Calcola quantità con precisione
+        target_market = exchange.market(symbol)
+        info = target_market.get('info', {}) or {}
+        lot_filter = info.get('lotSizeFilter', {}) or {}
+        qty_step = float(lot_filter.get('qtyStep') or target_market['limits']['amount']['min'] or 0.001)
+        min_qty = float(lot_filter.get('minOrderQty') or qty_step)
+        
+        qty_raw = (cost * leverage) / price
+        d_qty = Decimal(str(qty_raw))
+        d_step = Decimal(str(qty_step))
+        steps = (d_qty / d_step).to_integral_value(rounding=ROUND_DOWN)
+        final_qty_d = steps * d_step
+        
+        if final_qty_d < Decimal(str(min_qty)):
+            final_qty_d = Decimal(str(min_qty))
+        final_qty = float("{:f}".format(final_qty_d.normalize()))
+        
+        # 6. Imposta leva
+        try:
+            exchange.set_leverage(int(leverage), symbol, params={'category': 'linear'})
+        except:
+            pass
+        
+        # 7. Calcola Stop Loss
+        sl_pct = DEFAULT_INITIAL_SL_PCT
+        is_long = new_side == 'buy'
+        sl_price = price * (1 - sl_pct) if is_long else price * (1 + sl_pct)
+        sl_str = exchange.price_to_precision(symbol, sl_price)
+        
+        print(f"🔄 REVERSE {symbol}: {current_side} -> {new_side}, size={recovery_size_pct*100:.1f}%, qty={final_qty}")
+        
+        # 8. Apri nuova posizione
+        res = exchange.create_order(
+            symbol, 'market', new_side, final_qty,
+            params={'category': 'linear', 'stopLoss': sl_str}
+        )
+        
+        print(f"✅ Reverse eseguito con successo: {res['id']}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Errore durante reverse: {e}")
+        return False
+
+
+def check_smart_reverse():
+    """Sistema intelligente multi-livello per gestire posizioni in perdita"""
     if not ENABLE_AI_REVIEW or not exchange:
         return
     
     try:
         positions = exchange.fetch_positions(None, params={'category': 'linear'})
+        wallet_bal = exchange.fetch_balance(params={'type': 'swap'})
+        wallet_balance = float(wallet_bal.get('USDT', {}).get('total', 0))
+        
+        if wallet_balance == 0:
+            return
         
         for p in positions:
             size = float(p.get('contracts') or 0)
@@ -181,14 +328,13 @@ def check_ai_review_for_losing_positions():
             entry_price = float(p.get('entryPrice') or 0)
             mark_price = float(p.get('markPrice') or 0)
             side = p.get('side', '').lower()
+            pnl_dollars = float(p.get('unrealizedPnl') or 0)
             
             if entry_price == 0:
                 continue
             
-            # Ottieni leva
+            # Calcola ROI con leva
             leverage = float(p.get('leverage') or 1)
-            
-            # Calcola ROI con leva (come mostrato su Bybit)
             is_long = side in ['long', 'buy']
             if is_long:
                 roi_raw = (mark_price - entry_price) / entry_price
@@ -197,53 +343,95 @@ def check_ai_review_for_losing_positions():
             
             roi = roi_raw * leverage  # ROI con leva
             
-            # Se in perdita > threshold, chiedi a AI
-            if roi < -AI_REVIEW_LOSS_THRESHOLD:
-                print(f"🔍 AI REVIEW: {symbol} {side.upper()} ROI={roi*100:.2f}% (leva {leverage}x) - Chiedo a Master AI...")
+            # Sistema a 4 livelli
+            
+            # LIVELLO 4: HARD STOP (-20%) - Chiudi sempre
+            if roi <= HARD_STOP_THRESHOLD:
+                print(f"🛑 HARD STOP: {symbol} {side.upper()} ROI={roi*100:.2f}% - Chiusura immediata!")
+                execute_close_position(symbol)
+                continue
+            
+            # LIVELLO 3: REVERSE TRIGGER (-15%) - Chiedi AI e reverse se confermato
+            if roi <= REVERSE_THRESHOLD:
+                # Controlla cooldown
+                symbol_key = symbol.replace("/", "").replace(":USDT", "")
+                last_reverse_time = reverse_cooldown_tracker.get(symbol_key, 0)
+                current_time = time.time()
                 
-                try:
-                    response = requests.post(
-                        f"{MASTER_AI_URL}/analyze",
-                        json={
-                            "symbol": symbol.replace("/", "").replace(":USDT", ""),
-                            "current_position": {
-                                "side": side,
-                                "entry_price": entry_price,
-                                "mark_price": mark_price,
-                                "roi_pct": roi,
-                                "size": size
-                            },
-                            "request_type": "position_review"
-                        },
-                        timeout=30
-                    )
+                if (current_time - last_reverse_time) < (REVERSE_COOLDOWN_MINUTES * 60):
+                    minutes_left = int((REVERSE_COOLDOWN_MINUTES * 60 - (current_time - last_reverse_time)) / 60)
+                    print(f"⏳ Reverse cooldown attivo per {symbol}: {minutes_left} minuti rimanenti")
+                    continue
+                
+                print(f"⚠️ REVERSE TRIGGER: {symbol} {side.upper()} ROI={roi*100:.2f}% - Chiedo conferma AI...")
+                
+                position_data = {
+                    "side": side,
+                    "entry_price": entry_price,
+                    "mark_price": mark_price,
+                    "roi_pct": roi,
+                    "size": size,
+                    "pnl_dollars": pnl_dollars,
+                    "leverage": leverage
+                }
+                
+                analysis = request_reverse_analysis(symbol, position_data)
+                
+                if analysis:
+                    action = analysis.get("action", "HOLD")
+                    rationale = analysis.get("rationale", "No rationale")
+                    confidence = analysis.get("confidence", 0)
+                    recovery_size_pct = analysis.get("recovery_size_pct", 0.15)
                     
-                    if response.status_code == 200:
-                        decision = response.json()
-                        action = decision.get("action", "HOLD")
-                        rationale = decision.get("rationale", "No rationale")
-                        
-                        print(f"🤖 AI DECISION for {symbol}: {action}")
-                        print(f"   Rationale: {rationale}")
-                        
-                        if action == "CLOSE":
-                            print(f"⚠️ AI suggests CLOSE for {symbol} - Manual action required")
-                            # Non chiudiamo automaticamente per sicurezza
-                        elif action == "REVERSE":
-                            print(f"⚠️ AI suggests REVERSE for {symbol} - Manual action required")
-                            # Non reversiamo automaticamente per sicurezza
-                        else:
-                            print(f"✅ AI suggests HOLD for {symbol} - Keeping position")
+                    print(f"🤖 AI REVERSE DECISION for {symbol}: {action} (confidence: {confidence}%)")
+                    print(f"   Rationale: {rationale}")
+                    
+                    if action == "REVERSE":
+                        print(f"🔄 Eseguo REVERSE per {symbol} con size {recovery_size_pct*100:.1f}%")
+                        if execute_reverse(symbol, side, recovery_size_pct):
+                            reverse_cooldown_tracker[symbol_key] = current_time
+                    elif action == "CLOSE":
+                        print(f"🔒 Eseguo CLOSE per {symbol}")
+                        execute_close_position(symbol)
                     else:
-                        print(f"⚠️ AI Review failed for {symbol}: HTTP {response.status_code} - Defaulting to HOLD")
-                        
-                except requests.exceptions.Timeout:
-                    print(f"⚠️ AI Review timeout for {symbol} - Defaulting to HOLD")
-                except Exception as e:
-                    print(f"⚠️ AI Review error for {symbol}: {e} - Defaulting to HOLD")
-                    
+                        print(f"✋ HOLD - Mantengo posizione {symbol}")
+                else:
+                    print(f"⚠️ Analisi AI fallita per {symbol} - Mantengo posizione")
+                
+                continue
+            
+            # LIVELLO 2: AI REVIEW (-12%) - Solo analisi e log
+            if roi <= AI_REVIEW_THRESHOLD:
+                print(f"🔍 AI REVIEW: {symbol} {side.upper()} ROI={roi*100:.2f}% - Chiedo consiglio AI...")
+                
+                position_data = {
+                    "side": side,
+                    "entry_price": entry_price,
+                    "mark_price": mark_price,
+                    "roi_pct": roi,
+                    "size": size,
+                    "pnl_dollars": pnl_dollars,
+                    "leverage": leverage
+                }
+                
+                analysis = request_reverse_analysis(symbol, position_data)
+                
+                if analysis:
+                    action = analysis.get("action", "HOLD")
+                    rationale = analysis.get("rationale", "No rationale")
+                    print(f"📊 AI RACCOMANDA: {action}")
+                    print(f"   Rationale: {rationale}")
+                else:
+                    print(f"⚠️ Analisi AI fallita per {symbol}")
+                
+                continue
+            
+            # LIVELLO 1: WARNING (-8%) - Solo log
+            if roi <= WARNING_THRESHOLD:
+                print(f"⚠️ WARNING: {symbol} {side.upper()} ROI={roi*100:.2f}% - Posizione in perdita moderata")
+                
     except Exception as e:
-        print(f"⚠️ AI Review system error: {e}")
+        print(f"⚠️ Smart Reverse system error: {e}")
 
 # --- API ENDPOINTS ---
 @app.get("/get_wallet_balance")
@@ -379,5 +567,5 @@ def close_position(req: CloseRequest): return {"status": "manual_only"}
 @app.post("/manage_active_positions")
 def manage():
     check_and_update_trailing_stops()
-    check_ai_review_for_losing_positions()
+    check_smart_reverse()
     return {"status": "ok"}
