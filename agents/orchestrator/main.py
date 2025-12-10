@@ -1,4 +1,4 @@
-import asyncio, httpx, json
+import asyncio, httpx, json, os
 from datetime import datetime
 
 URLS = {
@@ -12,6 +12,48 @@ SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 MAX_POSITIONS = 3  # Numero massimo posizioni contemporanee
 REVERSE_THRESHOLD = 2.0  # Percentuale perdita per trigger reverse analysis
 CYCLE_INTERVAL = 60  # Secondi tra ogni ciclo di controllo (era 900)
+
+AI_DECISIONS_FILE = "/data/ai_decisions.json"
+
+def save_monitoring_decision(positions_count: int, max_positions: int, positions_details: list, reason: str):
+    """Salva la decisione di monitoraggio per la dashboard"""
+    try:
+        decisions = []
+        if os.path.exists(AI_DECISIONS_FILE):
+            with open(AI_DECISIONS_FILE, 'r') as f:
+                decisions = json.load(f)
+        
+        # Crea un summary delle posizioni
+        positions_summary = []
+        for p in positions_details:
+            pnl_pct = (p.get('pnl', 0) / (p.get('entry_price', 1) * p.get('size', 1))) * 100 if p.get('entry_price') else 0
+            positions_summary.append({
+                'symbol': p.get('symbol'),
+                'side': p.get('side'),
+                'pnl': p.get('pnl'),
+                'pnl_pct': round(pnl_pct, 2)
+            })
+        
+        decisions.append({
+            'timestamp': datetime.now().isoformat(),
+            'symbol': 'PORTFOLIO',
+            'action': 'HOLD',
+            'leverage': 0,
+            'size_pct': 0,
+            'rationale': reason,
+            'analysis_summary': f"Monitoraggio: {positions_count}/{max_positions} posizioni attive",
+            'positions': positions_summary
+        })
+        
+        # Mantieni solo le ultime 100 decisioni
+        decisions = decisions[-100:]
+        
+        os.makedirs(os.path.dirname(AI_DECISIONS_FILE), exist_ok=True)
+        with open(AI_DECISIONS_FILE, 'w') as f:
+            json.dump(decisions, f, indent=2)
+            
+    except Exception as e:
+        print(f"⚠️ Error saving monitoring decision: {e}")
 
 async def manage_cycle():
     async with httpx.AsyncClient() as c:
@@ -86,6 +128,12 @@ async def analysis_cycle():
             else:
                 # Nessuna posizione in perdita critica
                 print("        ✅ Nessun allarme perdita - Skip analisi DeepSeek")
+                save_monitoring_decision(
+                    positions_count=len(position_details),
+                    max_positions=MAX_POSITIONS,
+                    positions_details=position_details,
+                    reason="Tutte le posizioni in profitto. Nessuna azione richiesta. Continuo monitoraggio trailing stop."
+                )
             return
 
         # CASO 2: Almeno uno slot libero (< 3 posizioni)
@@ -107,6 +155,12 @@ async def analysis_cycle():
         
         if not assets_data: 
             print("        ⚠️ Nessun dato tecnico disponibile")
+            save_monitoring_decision(
+                positions_count=0,
+                max_positions=MAX_POSITIONS,
+                positions_details=[],
+                reason="Impossibile ottenere dati tecnici dagli analizzatori. Riprovo al prossimo ciclo."
+            )
             return
 
         # 5. AI DECISION
