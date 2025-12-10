@@ -42,9 +42,9 @@ class BybitClient:
                 positions = []
                 for pos in response['result']['list']:
                     if float(pos.get('size', 0)) > 0:
-                        entry_price = float(pos.get('avgPrice', 0))
-                        mark_price = float(pos.get('markPrice', pos.get('avgPrice', 0)))
-                        leverage = float(pos.get('leverage', 1))
+                        entry_price = self.safe_float(pos.get('avgPrice', 0))
+                        mark_price = self.safe_float(pos.get('markPrice', pos.get('avgPrice', 0)))
+                        leverage = self.safe_float(pos.get('leverage', 1))
                         side = pos.get('side', '').lower()
 
                         # Calculate PnL % with leverage (matching Bybit ROI display)
