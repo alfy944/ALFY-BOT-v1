@@ -34,6 +34,7 @@ AI_REVIEW_THRESHOLD = -0.12
 REVERSE_THRESHOLD = -0.15
 HARD_STOP_THRESHOLD = -0.20
 REVERSE_COOLDOWN_MINUTES = 30
+REVERSE_LEVERAGE = 5.0  # Leva per posizioni reverse
 reverse_cooldown_tracker = {}
 
 file_lock = Lock()
@@ -259,7 +260,7 @@ def execute_reverse(symbol, current_side, recovery_size_pct):
         
         # 4. Calcola size con recovery_size_pct
         cost = max(free_balance * recovery_size_pct, 10.0)
-        leverage = 5.0  # Leva standard per reverse
+        leverage = REVERSE_LEVERAGE
         
         # 5. Calcola quantità con precisione
         target_market = exchange.market(symbol)
@@ -281,8 +282,8 @@ def execute_reverse(symbol, current_side, recovery_size_pct):
         # 6. Imposta leva
         try:
             exchange.set_leverage(int(leverage), symbol, params={'category': 'linear'})
-        except:
-            pass
+        except Exception as e:
+            print(f"⚠️ Impossibile impostare leva: {e}")
         
         # 7. Calcola Stop Loss
         sl_pct = DEFAULT_INITIAL_SL_PCT
