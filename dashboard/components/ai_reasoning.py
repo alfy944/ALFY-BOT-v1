@@ -1,5 +1,6 @@
 import streamlit as st
 import json
+import html
 from utils.data_manager import get_ai_decisions
 
 def render_ai_reasoning():
@@ -26,6 +27,7 @@ def render_ai_reasoning():
     # Mostra le ultime 10 decisioni
     for decision in reversed(decisions[-10:]):
         action = decision.get('action', 'HOLD')
+        symbol = decision.get('symbol', 'N/A')
         
         # Determina emoji e colore in base all'azione
         if action == 'OPEN_LONG':
@@ -41,37 +43,75 @@ def render_ai_reasoning():
             action_color = '#ffaa00'
             action_text = 'CLOSE'
         else:
-            action_emoji = '⏸️'
-            action_color = '#808080'
-            action_text = 'HOLD'
+            # HOLD
+            if symbol == 'PORTFOLIO':
+                action_emoji = '📊'
+                action_color = '#4da6ff'
+                action_text = 'MONITORING'
+            else:
+                action_emoji = '⏸️'
+                action_color = '#808080'
+                action_text = 'HOLD'
         
         # Formatta timestamp
         timestamp = decision.get('timestamp', 'N/A')
         if timestamp != 'N/A':
             timestamp = timestamp[:19].replace('T', ' ')
         
-        symbol = decision.get('symbol', 'N/A')
-        rationale = decision.get('rationale', 'N/A')
+        rationale = html.escape(decision.get('rationale', 'N/A'))
         leverage = decision.get('leverage', 1)
         size_pct = decision.get('size_pct', 0)
-        analysis_summary = decision.get('analysis_summary', '')
+        analysis_summary = html.escape(decision.get('analysis_summary', ''))
         
-        st.markdown(f"""
-        <div class="ai-decision-card">
-            <div class="decision-header">
-                <span class="decision-time">{timestamp}</span>
-                <span class="decision-action" style="color: {action_color}; text-shadow: 0 0 10px {action_color};">
-                    {action_emoji} {action_text}
-                </span>
-                <span class="decision-symbol" style="color: #00d4ff; font-weight: 700;">{symbol}</span>
+        # Gestione speciale per decisioni PORTFOLIO
+        if symbol == 'PORTFOLIO':
+            positions = decision.get('positions', [])
+            positions_html = ''
+            if positions:
+                positions_html = '<div style="margin-top: 10px;"><strong style="color: #ffa500;">📈 Posizioni Attive:</strong><ul style="margin: 5px 0; padding-left: 20px;">'
+                for pos in positions:
+                    pos_symbol = html.escape(pos.get('symbol', 'N/A'))
+                    pos_side = html.escape(pos.get('side', 'N/A'))
+                    pos_pnl = pos.get('pnl', 0)
+                    pos_pnl_pct = pos.get('pnl_pct', 0)
+                    pnl_color = '#00ff41' if pos_pnl >= 0 else '#ff004c'
+                    positions_html += f'<li><strong>{pos_symbol}</strong> ({pos_side}): <span style="color: {pnl_color};">${pos_pnl:.2f} ({pos_pnl_pct:+.2f}%)</span></li>'
+                positions_html += '</ul></div>'
+            
+            st.markdown(f"""
+            <div class="ai-decision-card">
+                <div class="decision-header">
+                    <span class="decision-time">{timestamp}</span>
+                    <span class="decision-action" style="color: {action_color}; text-shadow: 0 0 10px {action_color};">
+                        {action_emoji} {action_text}
+                    </span>
+                    <span class="decision-symbol" style="color: #00d4ff; font-weight: 700;">{html.escape(symbol)}</span>
+                </div>
+                <div class="decision-reasoning">
+                    <p><strong style="color: #00ff9d;">💡 Rationale:</strong> {rationale}</p>
+                    {f'<p><strong style="color: #ff6b9d;">📊 Status:</strong> {analysis_summary}</p>' if analysis_summary else ''}
+                    {positions_html}
+                </div>
             </div>
-            <div class="decision-reasoning">
-                <p><strong style="color: #00ff9d;">💡 Rationale:</strong> {rationale}</p>
-                {f'<p><strong style="color: #ff6b9d;">📊 Analysis:</strong> {analysis_summary}</p>' if analysis_summary else ''}
-                {f'<p><strong style="color: #ffa500;">⚡ Leverage:</strong> {leverage}x | <strong style="color: #ffa500;">📈 Size:</strong> {size_pct*100:.1f}%</p>' if action in ['OPEN_LONG', 'OPEN_SHORT'] else ''}
+            """, unsafe_allow_html=True)
+        else:
+            # Decisione normale su singolo asset
+            st.markdown(f"""
+            <div class="ai-decision-card">
+                <div class="decision-header">
+                    <span class="decision-time">{timestamp}</span>
+                    <span class="decision-action" style="color: {action_color}; text-shadow: 0 0 10px {action_color};">
+                        {action_emoji} {action_text}
+                    </span>
+                    <span class="decision-symbol" style="color: #00d4ff; font-weight: 700;">{html.escape(symbol)}</span>
+                </div>
+                <div class="decision-reasoning">
+                    <p><strong style="color: #00ff9d;">💡 Rationale:</strong> {rationale}</p>
+                    {f'<p><strong style="color: #ff6b9d;">📊 Analysis:</strong> {analysis_summary}</p>' if analysis_summary else ''}
+                    {f'<p><strong style="color: #ffa500;">⚡ Leverage:</strong> {leverage}x | <strong style="color: #ffa500;">📈 Size:</strong> {size_pct*100:.1f}%</p>' if action in ['OPEN_LONG', 'OPEN_SHORT'] else ''}
+                </div>
             </div>
-        </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
         
         # Expander per JSON completo
         with st.expander(f"📄 JSON Completo - {symbol}"):
