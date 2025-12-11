@@ -168,7 +168,7 @@ def check_and_update_trailing_stops():
             # Leggi Stop Loss reale dalla risposta V5
             sl_current = float(p.get('stopLoss') or 0)
             
-            if entry_price == 0:
+            if entry_price == 0 or mark_price == 0:
                 continue
 
             # 1) ROI raw (senza leva)
