@@ -6,7 +6,7 @@ URLS = {
     "pos": "http://07_position_manager:8000",
     "ai": "http://04_master_ai_agent:8000"
 }
-SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+DEFAULT_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 
 # --- CONFIGURAZIONE OTTIMIZZAZIONE ---
 MAX_POSITIONS = 3  # Numero massimo posizioni contemporanee
@@ -14,6 +14,9 @@ REVERSE_THRESHOLD = 2.0  # Percentuale perdita per trigger reverse analysis
 CYCLE_INTERVAL = 60  # Secondi tra ogni ciclo di controllo (era 900)
 
 AI_DECISIONS_FILE = "/data/ai_decisions.json"
+BYBIT_TICKERS_URL = "https://api.bybit.com/v5/market/tickers"
+USE_TRENDING = os.getenv("USE_TRENDING_SYMBOLS", "true").lower() == "true"
+TRENDING_LIMIT = int(os.getenv("TRENDING_SYMBOLS_LIMIT", "6"))
 
 def save_monitoring_decision(positions_count: int, max_positions: int, positions_details: list, reason: str):
     """Salva la decisione di monitoraggio per la dashboard"""
@@ -59,6 +62,45 @@ async def manage_cycle():
     async with httpx.AsyncClient() as c:
         try: await c.post(f"{URLS['pos']}/manage_active_positions", timeout=5)
         except: pass
+
+async def fetch_trending_symbols(client: httpx.AsyncClient) -> list:
+    """Fetch trending symbols from Bybit using 24h turnover as a proxy."""
+    try:
+        resp = await client.get(BYBIT_TICKERS_URL, params={"category": "linear"})
+        data = resp.json()
+
+        if data.get("retCode") != 0:
+            print(f"⚠️ Trending fetch failed: {data.get('retMsg')}")
+            return []
+
+        rows = data.get("result", {}).get("list", []) if isinstance(data.get("result"), dict) else []
+        ranked = sorted(rows, key=lambda r: float(r.get("turnover24h") or 0), reverse=True)
+
+        symbols = []
+        for row in ranked:
+            sym = row.get("symbol")
+            if sym and sym.endswith("USDT"):
+                symbols.append(sym)
+            if len(symbols) >= TRENDING_LIMIT:
+                break
+
+        return symbols
+    except Exception as e:
+        print(f"⚠️ Error fetching trending symbols: {e}")
+        return []
+
+async def get_symbol_universe(client: httpx.AsyncClient) -> list:
+    """Return the list of symbols to scan, preferring Bybit trending if enabled."""
+    if not USE_TRENDING:
+        return DEFAULT_SYMBOLS
+
+    trending = await fetch_trending_symbols(client)
+    if trending:
+        print(f"🔥 Trending Bybit symbols: {trending}")
+        return trending
+
+    print("⚠️ Nessun trending disponibile, uso lista di default")
+    return DEFAULT_SYMBOLS
 
 async def analysis_cycle():
     async with httpx.AsyncClient(timeout=60) as c:
@@ -169,7 +211,8 @@ async def analysis_cycle():
         print(f"        🔍 Slot libero - Chiamo DeepSeek per nuove opportunità")
         
         # 3. FILTER - Solo asset senza posizione aperta
-        scan_list = [s for s in SYMBOLS if s not in active_symbols]
+        symbols_universe = await get_symbol_universe(c)
+        scan_list = [s for s in symbols_universe if s not in active_symbols]
         if not scan_list:
             print("        ⚠️ Nessun asset disponibile per scan")
             return

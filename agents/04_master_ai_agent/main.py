@@ -12,8 +12,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MasterAI")
 
 app = FastAPI()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=OPENAI_API_KEY)
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
 
 # Agent URLs for reverse analysis
 AGENT_URLS = {
@@ -211,7 +213,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
 """
 
         response = client.chat.completions.create(
-            model="gpt-5.1", 
+            model=DEEPSEEK_MODEL,
             messages=[
                 {"role": "system", "content": enhanced_system_prompt},
                 {"role": "user", "content": f"ANALIZZA E AGISCI: {json.dumps(prompt_data)}"},
@@ -416,7 +418,7 @@ Recovery size calcolato: {recovery_size_pct:.2f} ({recovery_size_pct*100:.1f}%)
 Analizza TUTTI gli indicatori e decidi: HOLD, CLOSE o REVERSE."""
         
         response = client.chat.completions.create(
-            model="gpt-5.1",
+            model=DEEPSEEK_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
