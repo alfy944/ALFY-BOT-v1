@@ -4,7 +4,7 @@ import logging
 import httpx
 from datetime import datetime
 from fastapi import FastAPI
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 from typing import Dict, Any, Literal, Optional
 from openai import OpenAI
 
@@ -111,16 +111,21 @@ def save_ai_decision(decision_data):
 class Decision(BaseModel):
     symbol: str
     action: Literal["OPEN_LONG", "OPEN_SHORT", "HOLD", "CLOSE"]
-    leverage: float = 1.0  
+    leverage: float = 1.0
     size_pct: float = 0.0
     rationale: str
 
     # Validator permissivi
     @field_validator("leverage")
     def clamp_lev(cls, v): return max(1.0, min(v, 10.0))
-    
-    @field_validator("size_pct")
-    def clamp_size(cls, v): return max(0.05, min(v, 0.25)) # Min 5% - Max 25%
+
+    @model_validator(mode="after")
+    def normalize_size(cls, values):
+        if values.action in ("HOLD", "CLOSE"):
+            values.size_pct = 0.0
+        else:
+            values.size_pct = max(0.05, min(values.size_pct, 0.25))
+        return values
 
 class AnalysisPayload(BaseModel):
     global_data: Dict[str, Any]
@@ -149,26 +154,25 @@ def get_evolved_params() -> Dict[str, Any]:
 
 
 SYSTEM_PROMPT = """
-Sei un TRADER ALGORITMICO AGGRESSIVO.
-Il tuo compito non è solo analizzare, è ESEGUIRE.
+Sei un TRADER ALGORITMICO AGGRESSIVO ma DISCIPLINATO.
+Il tuo compito è analizzare e poi AGIRE solo se i segnali sono solidi.
 
-REGOLE CRITICHE:
-1. Se l'analisi è "Bullish" e non hai posizioni -> DEVI ordinare "OPEN_LONG".
-2. Se l'analisi è "Bearish" e non hai posizioni -> DEVI ordinare "OPEN_SHORT".
-3. NON dire "consiglio di aprire" senza mettere l'ordine nel JSON. FALLO.
-4. Leva consigliata: 5x - 7x per Scalp.
-5. Size consigliata: 0.15 (15% del wallet) per trade.
+LINEE GUIDA CHIAVE:
+- Se i segnali tecnici sono chiari e coerenti con il trend -> apri la posizione (OPEN_LONG/OPEN_SHORT).
+- Se i segnali sono deboli o misti -> scegli esplicitamente HOLD.
+- Se esistono posizioni aperte valuta la coerenza prima di aprire nuove operazioni.
+- Usa leva e size in base alla qualità del setup (non default fissi).
 
 FORMATO RISPOSTA JSON OBBLIGATORIO:
 {
   "analysis_summary": "Breve sintesi del perché",
   "decisions": [
-    { 
-      "symbol": "ETHUSDT", 
-      "action": "OPEN_LONG", 
-      "leverage": 5.0, 
-      "size_pct": 0.15, 
-      "rationale": "RSI basso su supporto" 
+    {
+      "symbol": "ETHUSDT",
+      "action": "OPEN_LONG" | "OPEN_SHORT" | "HOLD" | "CLOSE",
+      "leverage": 5.0,
+      "size_pct": 0.15,
+      "rationale": "RSI basso su supporto"
     }
   ]
 }
@@ -186,9 +190,10 @@ def decide_batch(payload: AnalysisPayload):
             t = v.get('tech', {})
             assets_summary[k] = {
                 "price": t.get('price'),
-                "rsi_7": t.get('rsi'), # Usiamo RSI veloce
+                "rsi_7": t.get('details', {}).get('rsi_7') or t.get('rsi_7'),
                 "trend": t.get('trend'),
-                "macd": t.get('macd_hist')
+                "macd_hist": t.get('macd_hist'),
+                "macd": t.get('macd')
             }
             
         prompt_data = {
