@@ -349,6 +349,10 @@ def get_market_risk_data(symbol: str) -> Dict[str, Any]:
                     "atr": to_float(d.get("details", {}).get("atr") or d.get("atr")),
                     "price": to_float(d.get("price")),
                     "momentum_exit": (d.get("momentum_exit") or {}),
+                    "trend": d.get("trend"),
+                    "macd_hist": to_float(d.get("macd_hist"), None),
+                    "rsi": to_float(d.get("rsi"), None),
+                    "ema_20": to_float((d.get("details", {}) or {}).get("ema_20"), None),
                 }
     except Exception:
         pass
@@ -415,6 +419,7 @@ def check_and_update_trailing_stops():
             risk_data = get_market_risk_data(symbol)
             atr = risk_data.get("atr")
             momentum_exit = risk_data.get("momentum_exit") or {}
+            ema_20 = to_float(risk_data.get("ema_20"), 0.0)
 
             # Momentum-based soft exit (2/3 conditions)
             if momentum_exit.get(side_dir):
@@ -468,6 +473,17 @@ def check_and_update_trailing_stops():
                 else:
                     if sl_current == 0.0 or trailing_target < sl_current:
                         new_sl_price = trailing_target if new_sl_price is None else min(new_sl_price, trailing_target)
+
+                # Structure-aware trailing using EMA20 as dynamic support/resistance
+                if ema_20 > 0 and atr:
+                    if side_dir == "long":
+                        structure_sl = ema_20 - (atr * 0.2)
+                        if sl_current == 0.0 or structure_sl > sl_current:
+                            new_sl_price = max(new_sl_price or 0, structure_sl)
+                    else:
+                        structure_sl = ema_20 + (atr * 0.2)
+                        if sl_current == 0.0 or structure_sl < sl_current:
+                            new_sl_price = structure_sl if new_sl_price is None else min(new_sl_price, structure_sl)
 
             # Fallback trailing distance if ATR unavailable but break-even reached
             if new_sl_price is None and (position_risk_meta.get(sym_id, {}).get("breakeven_reached") or sl_current == entry_price):
@@ -864,11 +880,25 @@ def check_smart_reverse():
                     })
 
                     action_to_execute = action
-                    if action == "REVERSE" and confidence < 75:
-                        print(f"✋ Reverse bloccato per confidenza bassa ({confidence:.0f}%). Eseguo CLOSE.")
-                        action_to_execute = "CLOSE"
-                    elif action == "REVERSE":
-                        action_to_execute = "CLOSE_COOLDOWN"
+                    if action == "REVERSE":
+                        market_context = get_market_risk_data(symbol)
+                        trend = (market_context.get("trend") or "").upper()
+                        macd_hist = to_float(market_context.get("macd_hist"), 0.0)
+                        rsi_val = to_float(market_context.get("rsi"), 50.0)
+
+                        trend_flip = (trend == "BEARISH" and side_dir == "long") or (trend == "BULLISH" and side_dir == "short")
+                        macd_alignment = (macd_hist < 0 and side_dir == "long") or (macd_hist > 0 and side_dir == "short")
+                        rsi_alignment = (rsi_val < 45 and side_dir == "long") or (rsi_val > 55 and side_dir == "short")
+                        context_score = sum([trend_flip, macd_alignment, rsi_alignment]) / 3.0
+
+                        if confidence < 80 or context_score < 0.75:
+                            print(
+                                f"✋ Reverse bloccato: conf {confidence:.0f}%, contesto {context_score*100:.0f}% | "
+                                "eseguo CLOSE conservativo"
+                            )
+                            action_to_execute = "CLOSE"
+                        else:
+                            action_to_execute = "CLOSE_COOLDOWN"
 
                     if action_to_execute == "CLOSE_COOLDOWN":
                         print(f"🔒 Chiudo {symbol} e imposto cooldown per evitare reverse immediato")

@@ -37,6 +37,22 @@ DEFAULT_PARAMS = {
     "atr_multiplier_tp": 3.0,
     "min_rsi_for_long": 40,
     "max_rsi_for_short": 60,
+    "min_score_trade": 0.6,
+    "atr_sl_factor": 1.2,
+    "trailing_atr_factor": 1.0,
+    "breakeven_R": 1.0,
+    "reverse_enabled": True,
+    "max_daily_trades": 3,
+}
+
+DEFAULT_CONTROLS = {
+    "disable_symbols": [],
+    "disable_regimes": [],
+    "max_trades_per_hour": 0,
+    "cooldown_minutes": 0,
+    "safe_mode": False,
+    "max_trades_per_day": None,
+    "size_cap": None,
 }
 
 # DeepSeek client (OpenAI compatible)
@@ -128,6 +144,13 @@ def load_current_params() -> Dict[str, Any]:
     return data.get("params", DEFAULT_PARAMS.copy())
 
 
+def load_current_controls() -> Dict[str, Any]:
+    data = load_json_file(EVOLVED_PARAMS_FILE, {})
+    merged = DEFAULT_CONTROLS.copy()
+    merged.update(data.get("controls", {}))
+    return merged
+
+
 def get_recent_trades(hours: int = 48) -> List[Dict[str, Any]]:
     """Get trades from the last N hours"""
     all_trades = load_json_file(TRADING_HISTORY_FILE, [])
@@ -143,6 +166,11 @@ def get_recent_trades(hours: int = 48) -> List[Dict[str, Any]]:
             continue
     
     return recent_trades
+
+
+def get_last_n_trades(n: int) -> List[Dict[str, Any]]:
+    trades = load_json_file(TRADING_HISTORY_FILE, [])
+    return trades[-n:]
 
 
 def calculate_performance(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -201,6 +229,103 @@ def calculate_performance(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def compute_time_in_market_hours(trades: List[Dict[str, Any]]) -> float:
+    durations = [t.get('duration_minutes', 0) or 0 for t in trades]
+    return sum(durations) / 60.0
+
+
+def compute_useless_trades(trades: List[Dict[str, Any]]) -> int:
+    useless = 0
+    for t in trades:
+        pnl_pct = t.get('pnl_pct')
+        if pnl_pct is None:
+            continue
+        if abs(pnl_pct) < 0.05:
+            useless += 1  # trade chiuso a 0 / BE
+            continue
+        # penalizza trade piccoli (<0.3R). Usando pnl_pct come proxy quando manca R esplicito.
+        initial_risk = t.get('market_conditions', {}).get('initial_risk_pct')
+        baseline_r = abs(initial_risk) if initial_risk else 1.0
+        if pnl_pct < 0.3 * baseline_r:
+            useless += 1
+        if t.get('market_conditions', {}).get('regime') == 'range':
+            useless += 1
+    return useless
+
+
+def compute_reward(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
+    perf = calculate_performance(trades)
+    trade_count = perf.get('total_trades', 0)
+    pnl = perf.get('total_pnl', 0.0)
+    max_dd = perf.get('max_drawdown', 0.0)
+    time_in_market = compute_time_in_market_hours(trades)
+    useless_trades = compute_useless_trades(trades)
+
+    reward = pnl
+    reward -= 0.7 * max_dd
+    reward -= 0.3 * trade_count
+    reward -= 0.2 * time_in_market
+    reward -= 0.5 * useless_trades
+
+    return {
+        "reward": round(reward, 4),
+        "pnl": pnl,
+        "max_drawdown": max_dd,
+        "trade_count": trade_count,
+        "time_in_market_hours": round(time_in_market, 2),
+        "useless_trades": useless_trades,
+    }
+
+
+def compute_agent_confidence(reward_samples: List[float], trade_samples: int) -> float:
+    if not reward_samples:
+        return 0.0
+    mean_reward = sum(reward_samples) / len(reward_samples)
+    variance = sum((r - mean_reward) ** 2 for r in reward_samples) / len(reward_samples)
+    stability = 1 / (1 + variance)
+    sample_strength = min(trade_samples / 20.0, 1.0)
+    positive_bias = 0.2 if mean_reward > 0 else 0.0
+    confidence = max(0.0, min(1.0, stability * 0.5 + sample_strength * 0.3 + positive_bias))
+    return round(confidence, 3)
+
+
+def segment_trades_by_regime(trades: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    regimes: Dict[str, List[Dict[str, Any]]] = {
+        "trend": [],
+        "range": [],
+        "high_volatility": [],
+        "low_volatility": [],
+        "unknown": [],
+    }
+
+    for t in trades:
+        conditions = t.get('market_conditions', {}) or {}
+        regime = conditions.get('regime') or conditions.get('trend')
+        volatility = conditions.get('volatility')
+
+        if regime in ('trend', 'bullish', 'bearish'):
+            regimes["trend"].append(t)
+        elif regime == 'range':
+            regimes["range"].append(t)
+        else:
+            regimes["unknown"].append(t)
+
+        if volatility == 'high':
+            regimes["high_volatility"].append(t)
+        elif volatility == 'low':
+            regimes["low_volatility"].append(t)
+
+    return regimes
+
+
+def should_enable_safe_mode(trades: List[Dict[str, Any]], drawdown: float, dd_threshold: float = 5.0) -> bool:
+    completed = [t for t in trades if t.get('pnl_pct') is not None]
+    last_three = completed[-3:]
+    if len(last_three) == 3 and all((t.get('pnl_pct', 0) <= 0) for t in last_three):
+        return True
+    return drawdown > dd_threshold
+
+
 async def call_deepseek(prompt: str) -> str:
     """Call DeepSeek API for analysis"""
     if not client:
@@ -236,10 +361,11 @@ def parse_suggestions(suggestions_json: str) -> Dict[str, Any]:
     try:
         data = json.loads(suggestions_json)
         suggested_params = data.get("suggested_params", {})
-        
+        suggested_controls = data.get("controls", {})
+
         # Validate and constrain parameters
         params = DEFAULT_PARAMS.copy()
-        
+
         if "rsi_overbought" in suggested_params:
             params["rsi_overbought"] = max(60, min(80, suggested_params["rsi_overbought"]))
         if "rsi_oversold" in suggested_params:
@@ -258,11 +384,39 @@ def parse_suggestions(suggestions_json: str) -> Dict[str, Any]:
             params["min_rsi_for_long"] = max(30, min(50, suggested_params["min_rsi_for_long"]))
         if "max_rsi_for_short" in suggested_params:
             params["max_rsi_for_short"] = max(50, min(70, suggested_params["max_rsi_for_short"]))
-        
-        return params
+        if "min_score_trade" in suggested_params:
+            params["min_score_trade"] = max(0.55, min(0.75, suggested_params["min_score_trade"]))
+        if "atr_sl_factor" in suggested_params:
+            params["atr_sl_factor"] = max(1.0, min(1.8, suggested_params["atr_sl_factor"]))
+        if "trailing_atr_factor" in suggested_params:
+            params["trailing_atr_factor"] = max(0.8, min(1.5, suggested_params["trailing_atr_factor"]))
+        if "breakeven_R" in suggested_params:
+            params["breakeven_R"] = max(0.8, min(1.5, suggested_params["breakeven_R"]))
+        if "reverse_enabled" in suggested_params:
+            params["reverse_enabled"] = bool(suggested_params["reverse_enabled"])
+        if "max_daily_trades" in suggested_params:
+            params["max_daily_trades"] = max(1, min(5, suggested_params["max_daily_trades"]))
+
+        controls = DEFAULT_CONTROLS.copy()
+        if "disable_symbols" in suggested_controls:
+            controls["disable_symbols"] = [str(s).upper() for s in suggested_controls.get("disable_symbols", [])][:5]
+        if "disable_regimes" in suggested_controls:
+            controls["disable_regimes"] = suggested_controls.get("disable_regimes", [])[:5]
+        if "max_trades_per_hour" in suggested_controls:
+            controls["max_trades_per_hour"] = max(0, min(5, int(suggested_controls["max_trades_per_hour"])))
+        if "cooldown_minutes" in suggested_controls:
+            controls["cooldown_minutes"] = max(0, min(180, int(suggested_controls["cooldown_minutes"])))
+        if "safe_mode" in suggested_controls:
+            controls["safe_mode"] = bool(suggested_controls.get("safe_mode"))
+        if "max_trades_per_day" in suggested_controls and suggested_controls.get("max_trades_per_day") is not None:
+            controls["max_trades_per_day"] = max(1, min(5, int(suggested_controls["max_trades_per_day"])))
+        if "size_cap" in suggested_controls and suggested_controls.get("size_cap") is not None:
+            controls["size_cap"] = max(0.01, min(0.25, float(suggested_controls["size_cap"])))
+
+        return {"params": params, "controls": controls}
     except Exception as e:
         logger.error(f"Error parsing suggestions: {e}")
-        return DEFAULT_PARAMS.copy()
+        return {"params": DEFAULT_PARAMS.copy(), "controls": DEFAULT_CONTROLS.copy()}
 
 
 def backtest_strategy(trades: List[Dict[str, Any]], new_params: Dict[str, Any]) -> Dict[str, Any]:
@@ -274,7 +428,6 @@ def backtest_strategy(trades: List[Dict[str, Any]], new_params: Dict[str, Any]) 
     current_params = load_current_params()
     
     adjusted_trades = []
-    total_pnl = 0
     
     for trade in trades:
         if trade.get('pnl_pct') is None:
@@ -287,14 +440,21 @@ def backtest_strategy(trades: List[Dict[str, Any]], new_params: Dict[str, Any]) 
         # Adjust PnL (simplified - real backtest would be more complex)
         adjusted_pnl = trade['pnl_pct'] * leverage_ratio * size_ratio
         adjusted_trades.append({**trade, 'pnl_pct': adjusted_pnl})
-        total_pnl += adjusted_pnl
-    
+
     performance = calculate_performance(adjusted_trades)
-    return performance
+    reward_data = compute_reward(adjusted_trades)
+    return {"performance": performance, "reward": reward_data}
 
 
-def save_evolved_params(new_params: Dict[str, Any], current_perf: Dict[str, Any], 
-                        backtest_perf: Dict[str, Any], mutation_log: str = ""):
+def save_evolved_params(
+    new_params: Dict[str, Any],
+    controls: Dict[str, Any],
+    current_perf: Dict[str, Any],
+    backtest_result: Dict[str, Any],
+    reward_snapshot: Dict[str, Any],
+    agent_confidence: float,
+    mutation_log: str = ""
+):
     """Save evolved parameters to file"""
     # Get current version and increment
     current_data = load_json_file(EVOLVED_PARAMS_FILE, {})
@@ -310,10 +470,14 @@ def save_evolved_params(new_params: Dict[str, Any], current_perf: Dict[str, Any]
         "version": new_version,
         "evolved_at": datetime.now().isoformat(),
         "params": new_params,
+        "controls": controls,
         "performance": {
             "before": current_perf,
-            "after_backtest": backtest_perf
+            "after_backtest": backtest_result.get("performance", {}),
+            "reward_after": backtest_result.get("reward", {}),
         },
+        "reward": reward_snapshot,
+        "agent_confidence": agent_confidence,
         "mutation_log": mutation_log
     }
     
@@ -323,14 +487,15 @@ def save_evolved_params(new_params: Dict[str, Any], current_perf: Dict[str, Any]
     return new_version
 
 
-def archive_strategy(params: Dict[str, Any], version: str):
+def archive_strategy(params: Dict[str, Any], controls: Dict[str, Any], version: str):
     """Archive strategy to strategy_archive directory"""
     try:
         filepath = f"{STRATEGY_ARCHIVE_DIR}/strategy_{version}.json"
         data = {
             "version": version,
             "timestamp": datetime.now().isoformat(),
-            "params": params
+            "params": params,
+            "controls": controls,
         }
         save_json_file(filepath, data)
         
@@ -365,40 +530,59 @@ def log_evolution(status: str, details: Dict[str, Any]):
 async def profit_evolution_cycle():
     """Main ProFiT evolution cycle - runs every 48 hours"""
     logger.info("🧬 PROFIT EVOLUTION START")
-    
+
     try:
-        # 1. Collect recent trades
-        trades = get_recent_trades(hours=EVOLUTION_INTERVAL_HOURS)
-        logger.info(f"📊 Analyzing last {EVOLUTION_INTERVAL_HOURS} hours: {len(trades)} trades")
-        
+        # 1. Collect windowed trades
+        window_short = get_last_n_trades(20)
+        window_medium = get_recent_trades(hours=48)
+        window_long = get_recent_trades(hours=24 * 7)
+        trades = window_medium
+        logger.info(
+            f"📊 Windows -> short(20 trades): {len(window_short)}, medium(48h): {len(window_medium)}, long(7d): {len(window_long)}"
+        )
+
         if len(trades) < MIN_TRADES_FOR_EVOLUTION:
-            logger.info(f"⏸️ Not enough trades for evolution (need {MIN_TRADES_FOR_EVOLUTION}, got {len(trades)}), skipping")
+            logger.info(
+                f"⏸️ Not enough trades for evolution (need {MIN_TRADES_FOR_EVOLUTION}, got {len(trades)}), skipping"
+            )
             log_evolution("skipped", {"reason": "insufficient_trades", "count": len(trades)})
             return
-        
-        # 2. Calculate current performance
+
+        # 2. Calculate current performance and reward
         current_performance = calculate_performance(trades)
+        current_reward = compute_reward(trades)
         current_params = load_current_params()
-        
-        logger.info(f"📈 Current performance:")
+
+        window_rewards = {
+            "short": compute_reward(window_short),
+            "medium": current_reward,
+            "long": compute_reward(window_long),
+        }
+
+        regime_buckets = segment_trades_by_regime(trades)
+        regime_rewards = {k: compute_reward(v) for k, v in regime_buckets.items()}
+
+        logger.info("📈 Current performance:")
         logger.info(f"   - Win rate: {current_performance['win_rate']*100:.1f}%")
         logger.info(f"   - Total PnL: {current_performance['total_pnl']:.2f}%")
         logger.info(f"   - Max drawdown: {current_performance['max_drawdown']:.2f}%")
-        
+        logger.info(f"   - Reward: {current_reward['reward']:.2f}")
+
         # 3. Ask DeepSeek for analysis and improvements
         logger.info("🤖 Asking DeepSeek for improvements...")
-        
-        analysis_prompt = f"""
-Analyze these trading performance metrics and propose improvements to the parameters.
 
-Performance over last {EVOLUTION_INTERVAL_HOURS} hours:
-- Trades total: {current_performance['total_trades']}
-- Win rate: {current_performance['win_rate']*100:.1f}%
-- Total PnL: {current_performance['total_pnl']:.2f}%
-- Average trade duration: {current_performance['avg_duration']:.0f} minutes
-- Max drawdown: {current_performance['max_drawdown']:.2f}%
-- Winning trades: {current_performance['winning_trades']}
-- Losing trades: {current_performance['losing_trades']}
+        analysis_prompt = f"""
+Analyze these trading performance metrics and propose improvements to the parameters and protective controls.
+
+Reward function (MANDATORY): reward = pnl - 0.7*max_drawdown - 0.3*trade_count - 0.2*time_in_market_hours - 0.5*useless_trades.
+
+Window rewards:
+- Short (20 trades): {json.dumps(window_rewards['short'], indent=2)}
+- Medium (48h): {json.dumps(window_rewards['medium'], indent=2)}
+- Long (7d): {json.dumps(window_rewards['long'], indent=2)}
+
+Regime rewards (segmented learning):
+{json.dumps(regime_rewards, indent=2)}
 
 Current parameters:
 {json.dumps(current_params, indent=2)}
@@ -406,80 +590,134 @@ Current parameters:
 Sample trades (first 5):
 {json.dumps(trades[:5], indent=2)}
 
-Propose SPECIFIC modifications to the parameters to improve performance.
-Consider:
-- If win rate is low, consider adjusting RSI thresholds
-- If drawdown is high, consider reducing leverage or size
-- If PnL is negative, consider more conservative settings
-
-Respond ONLY with valid JSON in this format:
+You MUST respond ONLY with valid JSON in this format:
 {{
   "suggested_params": {{
-    "rsi_overbought": <value 60-80>,
-    "rsi_oversold": <value 20-40>,
-    "default_leverage": <value 1-10>,
-    "size_pct": <value 0.05-0.25>,
-    "reverse_threshold": <value 0.5-5.0>,
-    "atr_multiplier_sl": <value 1.0-4.0>,
-    "atr_multiplier_tp": <value 1.5-6.0>,
-    "min_rsi_for_long": <value 30-50>,
-    "max_rsi_for_short": <value 50-70>
+    "rsi_overbought": <60-80>,
+    "rsi_oversold": <20-40>,
+    "default_leverage": <1-10>,
+    "size_pct": <0.05-0.25>,
+    "reverse_threshold": <0.5-5.0>,
+    "atr_multiplier_sl": <1.0-4.0>,
+    "atr_multiplier_tp": <1.5-6.0>,
+    "min_rsi_for_long": <30-50>,
+    "max_rsi_for_short": <50-70>,
+    "min_score_trade": <0.55-0.75>,
+    "atr_sl_factor": <1.0-1.8>,
+    "trailing_atr_factor": <0.8-1.5>,
+    "breakeven_R": <0.8-1.5>,
+    "reverse_enabled": <true|false>,
+    "max_daily_trades": <1-5>
+  }},
+  "controls": {{
+    "disable_symbols": ["SOL", "BTC"],
+    "disable_regimes": ["range"],
+    "max_trades_per_hour": 1,
+    "cooldown_minutes": 60,
+    "safe_mode": false,
+    "max_trades_per_day": 1,
+    "size_cap": 0.05
   }},
   "reasoning": "Brief explanation of changes"
 }}
 """
-        
+
         suggestions = await call_deepseek(analysis_prompt)
-        new_params = parse_suggestions(suggestions)
-        
+        parsed = parse_suggestions(suggestions)
+        new_params = parsed.get("params", DEFAULT_PARAMS.copy())
+        new_controls = parsed.get("controls", DEFAULT_CONTROLS.copy())
+
         # Extract reasoning
         try:
             suggestion_data = json.loads(suggestions)
             reasoning = suggestion_data.get("reasoning", "No reasoning provided")
         except (json.JSONDecodeError, TypeError):
             reasoning = "Could not parse reasoning"
-        
-        logger.info(f"💡 DeepSeek suggests:")
+
+        logger.info("💡 DeepSeek suggests:")
         for key, value in new_params.items():
             if key in current_params and current_params[key] != value:
                 logger.info(f"   - {key}: {current_params[key]} → {value}")
+        logger.info(f"   Controls: {json.dumps(new_controls)}")
         logger.info(f"   Reasoning: {reasoning}")
-        
+
         # 4. Backtest with new parameters
         logger.info("🧪 Backtesting new strategy...")
         backtest_result = backtest_strategy(trades, new_params)
-        
-        logger.info(f"📊 Backtest result:")
-        logger.info(f"   - Win rate: {backtest_result['win_rate']*100:.1f}% ({(backtest_result['win_rate']-current_performance['win_rate'])*100:+.1f}%)")
-        logger.info(f"   - Total PnL: {backtest_result['total_pnl']:.2f}% ({backtest_result['total_pnl']-current_performance['total_pnl']:+.2f}%)")
-        logger.info(f"   - Max drawdown: {backtest_result['max_drawdown']:.2f}%")
-        
-        # 5. Decide if new strategy is better
-        pnl_improvement = backtest_result['total_pnl'] - current_performance['total_pnl']
-        
-        if pnl_improvement > BACKTEST_IMPROVEMENT_THRESHOLD:
-            new_version = save_evolved_params(new_params, current_performance, backtest_result, reasoning)
-            archive_strategy(new_params, new_version)
+
+        backtest_perf = backtest_result.get("performance", {})
+        backtest_reward = backtest_result.get("reward", {})
+        logger.info("📊 Backtest result:")
+        logger.info(
+            f"   - Reward: {backtest_reward.get('reward', 0):.2f} ({backtest_reward.get('reward', 0) - current_reward['reward']:+.2f})"
+        )
+        logger.info(
+            f"   - Win rate: {backtest_perf.get('win_rate', 0)*100:.1f}% ({(backtest_perf.get('win_rate', 0)-current_performance['win_rate'])*100:+.1f}%)"
+        )
+        logger.info(
+            f"   - Total PnL: {backtest_perf.get('total_pnl', 0):.2f}% ({backtest_perf.get('total_pnl', 0)-current_performance['total_pnl']:+.2f}%)"
+        )
+        logger.info(f"   - Max drawdown: {backtest_perf.get('max_drawdown', 0):.2f}%")
+
+        # 5. Decide if new strategy is better using reward
+        reward_improvement = backtest_reward.get('reward', 0) - current_reward.get('reward', 0)
+        reward_samples = [window_rewards['short']['reward'], window_rewards['medium']['reward'], window_rewards['long']['reward']]
+        agent_confidence = compute_agent_confidence(reward_samples, current_reward.get('trade_count', 0))
+
+        # Safe mode trigger
+        if should_enable_safe_mode(trades, current_performance.get('max_drawdown', 0)):
+            new_controls["safe_mode"] = True
+            new_controls["max_trades_per_day"] = new_controls.get("max_trades_per_day") or 1
+            new_controls["size_cap"] = min(new_controls.get("size_cap") or 0.05, 0.05)
+
+        if reward_improvement > BACKTEST_IMPROVEMENT_THRESHOLD or agent_confidence >= 0.7:
+            new_version = save_evolved_params(
+                new_params,
+                new_controls,
+                current_performance,
+                backtest_result,
+                {
+                    "current": current_reward,
+                    "backtest": backtest_reward,
+                    "windows": window_rewards,
+                },
+                agent_confidence,
+                reasoning,
+            )
+            archive_strategy(new_params, new_controls, new_version)
             logger.info(f"✅ Evolution successful! New strategy {new_version} saved")
             logger.info(f"💾 Saved: {EVOLVED_PARAMS_FILE}")
             logger.info(f"📁 Archived: {STRATEGY_ARCHIVE_DIR}/strategy_{new_version}.json")
             logger.info(f"🔄 Master AI will use new params from next cycle")
-            
-            log_evolution("success", {
-                "version": new_version,
-                "improvement": pnl_improvement,
-                "new_params": new_params
-            })
+
+            log_evolution(
+                "success",
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "reason": reasoning,
+                    "old_params": current_params,
+                    "new_params": new_params,
+                    "controls": new_controls,
+                    "reward": backtest_reward.get('reward', 0),
+                    "agent_confidence": agent_confidence,
+                },
+            )
         else:
-            logger.info(f"❌ New strategy didn't improve significantly (improvement: {pnl_improvement:.2f}%), keeping current params")
-            logger.info(f"   Required improvement: >{BACKTEST_IMPROVEMENT_THRESHOLD}%")
-            
-            log_evolution("rejected", {
-                "reason": "insufficient_improvement",
-                "improvement": pnl_improvement,
-                "threshold": BACKTEST_IMPROVEMENT_THRESHOLD
-            })
-        
+            logger.info(
+                f"❌ Strategy rejected: reward improvement {reward_improvement:.2f} <= threshold {BACKTEST_IMPROVEMENT_THRESHOLD:.2f}"
+            )
+            log_evolution(
+                "rejected",
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "reason": "insufficient_reward_improvement",
+                    "improvement": reward_improvement,
+                    "threshold": BACKTEST_IMPROVEMENT_THRESHOLD,
+                    "reward": current_reward,
+                    "suggested_controls": new_controls,
+                },
+            )
+
     except Exception as e:
         logger.error(f"❌ Evolution cycle error: {e}", exc_info=True)
         log_evolution("error", {"error": str(e)})
@@ -538,13 +776,17 @@ async def get_current_params():
             return {
                 "status": "default",
                 "version": "v0.0",
-                "params": DEFAULT_PARAMS
+                "params": DEFAULT_PARAMS,
+                "controls": DEFAULT_CONTROLS,
+                "agent_confidence": 0.0
             }
-        
+
         return {
             "status": "evolved",
             "version": data.get("version", "unknown"),
             "params": data.get("params", DEFAULT_PARAMS),
+            "controls": data.get("controls", DEFAULT_CONTROLS),
+            "agent_confidence": data.get("agent_confidence", 0.0),
             "evolved_at": data.get("evolved_at", "unknown")
         }
     except Exception as e:
@@ -558,11 +800,13 @@ async def get_performance():
     try:
         trades = get_recent_trades(hours=EVOLUTION_INTERVAL_HOURS)
         performance = calculate_performance(trades)
-        
+        reward = compute_reward(trades)
+
         return {
             "status": "success",
             "period_hours": EVOLUTION_INTERVAL_HOURS,
-            "performance": performance
+            "performance": performance,
+            "reward": reward
         }
     except Exception as e:
         logger.error(f"Error getting performance: {e}")

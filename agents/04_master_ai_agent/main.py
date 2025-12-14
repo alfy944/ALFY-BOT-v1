@@ -37,11 +37,28 @@ DEFAULT_PARAMS = {
     "atr_multiplier_tp": 3.0,
     "min_rsi_for_long": 40,
     "max_rsi_for_short": 60,
+    "min_score_trade": 0.6,
+    "atr_sl_factor": 1.2,
+    "trailing_atr_factor": 1.0,
+    "breakeven_R": 1.0,
+    "reverse_enabled": True,
+    "max_daily_trades": 3,
+}
+
+DEFAULT_CONTROLS = {
+    "disable_symbols": [],
+    "disable_regimes": [],
+    "max_trades_per_hour": 0,
+    "cooldown_minutes": 0,
+    "safe_mode": False,
+    "max_trades_per_day": None,
+    "size_cap": None,
 }
 
 EVOLVED_PARAMS_FILE = "/data/evolved_params.json"
 API_COSTS_FILE = "/data/api_costs.json"
 AI_DECISIONS_FILE = "/data/ai_decisions.json"
+MASTER_STATE_FILE = "/data/master_state.json"
 
 
 def log_api_call(tokens_in: int, tokens_out: int):
@@ -77,6 +94,25 @@ def log_api_call(tokens_in: int, tokens_out: int):
         logger.error(f"Error logging API call: {e}")
 
 
+def load_master_state() -> Dict[str, Any]:
+    try:
+        if os.path.exists(MASTER_STATE_FILE):
+            with open(MASTER_STATE_FILE, 'r') as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {"symbol_cooldowns": {}, "decisions": []}
+
+
+def save_master_state(state: Dict[str, Any]):
+    try:
+        os.makedirs(os.path.dirname(MASTER_STATE_FILE), exist_ok=True)
+        with open(MASTER_STATE_FILE, 'w') as f:
+            json.dump(state, f, indent=2)
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to persist master state: {e}")
+
+
 def save_ai_decision(decision_data):
     """Salva la decisione AI per visualizzarla nella dashboard"""
     try:
@@ -102,8 +138,18 @@ def save_ai_decision(decision_data):
         os.makedirs(os.path.dirname(AI_DECISIONS_FILE), exist_ok=True)
         with open(AI_DECISIONS_FILE, 'w') as f:
             json.dump(decisions, f, indent=2)
-            
+
         logger.info(f"AI decision saved: {decision_data.get('action')} on {decision_data.get('symbol')}")
+
+        # Persist lightweight state for gating
+        state = load_master_state()
+        state.setdefault('decisions', []).append({
+            'timestamp': datetime.now().isoformat(),
+            'symbol': decision_data.get('symbol'),
+            'action': decision_data.get('action'),
+        })
+        state['decisions'] = state['decisions'][-500:]
+        save_master_state(state)
     except Exception as e:
         logger.error(f"Error saving AI decision: {e}")
 
@@ -127,6 +173,27 @@ class Decision(BaseModel):
             values.size_pct = max(0.05, min(values.size_pct, 0.25))
         return values
 
+
+def is_open_action(action: str) -> bool:
+    return action in ("OPEN_LONG", "OPEN_SHORT")
+
+
+def count_recent_actions(decisions: list, minutes: int, action_filter=None) -> int:
+    cutoff = datetime.utcnow().timestamp() - minutes * 60
+    count = 0
+    for d in decisions:
+        ts = d.get('timestamp')
+        try:
+            ts_val = datetime.fromisoformat(ts).timestamp()
+        except Exception:
+            continue
+        if ts_val < cutoff:
+            continue
+        if action_filter and d.get('action') not in action_filter:
+            continue
+        count += 1
+    return count
+
 class AnalysisPayload(BaseModel):
     global_data: Dict[str, Any]
     assets_data: Dict[str, Any]
@@ -136,21 +203,41 @@ class ReverseAnalysisRequest(BaseModel):
     current_position: Dict[str, Any]
 
 
-def get_evolved_params() -> Dict[str, Any]:
-    """Load evolved parameters from Learning Agent or use defaults"""
+def load_evolved_config() -> Dict[str, Any]:
+    """Load evolved parameters/controls and confidence or use defaults"""
     try:
         if os.path.exists(EVOLVED_PARAMS_FILE):
             with open(EVOLVED_PARAMS_FILE, 'r') as f:
-                data = json.load(f)
+                data = json.load(f) or {}
                 version = data.get('version', 'unknown')
                 logger.info(f"📚 Using evolved params {version}")
-                return data.get("params", DEFAULT_PARAMS.copy())
+                params = data.get("params", DEFAULT_PARAMS.copy())
+                controls = DEFAULT_CONTROLS.copy()
+                controls.update(data.get("controls", {}))
+                confidence = float(data.get("agent_confidence", 0.0))
+                reward = data.get("reward", {})
+                return {
+                    "params": params,
+                    "controls": controls,
+                    "agent_confidence": confidence,
+                    "reward": reward,
+                }
         else:
             logger.info("📚 No evolved params found, using defaults")
-            return DEFAULT_PARAMS.copy()
+            return {
+                "params": DEFAULT_PARAMS.copy(),
+                "controls": DEFAULT_CONTROLS.copy(),
+                "agent_confidence": 0.0,
+                "reward": {},
+            }
     except Exception as e:
         logger.warning(f"⚠️ Error loading evolved params: {e}")
-        return DEFAULT_PARAMS.copy()
+        return {
+            "params": DEFAULT_PARAMS.copy(),
+            "controls": DEFAULT_CONTROLS.copy(),
+            "agent_confidence": 0.0,
+            "reward": {},
+        }
 
 
 SYSTEM_PROMPT = """
@@ -182,7 +269,15 @@ FORMATO RISPOSTA JSON OBBLIGATORIO:
 def decide_batch(payload: AnalysisPayload):
     try:
         # Load evolved parameters (hot-reload on each request)
-        params = get_evolved_params()
+        config = load_evolved_config()
+        confidence = config.get('agent_confidence', 0.0)
+        params = config.get('params', DEFAULT_PARAMS.copy()) if confidence >= 0.4 else DEFAULT_PARAMS.copy()
+        controls = config.get('controls', DEFAULT_CONTROLS.copy()) if confidence >= 0.4 else DEFAULT_CONTROLS.copy()
+
+        if controls.get('safe_mode'):
+            controls.setdefault('max_trades_per_day', 1)
+            controls.setdefault('size_cap', 0.05)
+        logger.info(f"🤝 Using controls: {controls} (confidence={confidence})")
         
         # Semplificazione dati per prompt
         assets_summary = {}
@@ -213,6 +308,16 @@ PARAMETRI OTTIMIZZATI (dall'evoluzione automatica):
 - Soglia reverse: {params.get('reverse_threshold', 2.0)}%
 - Min RSI per long: {params.get('min_rsi_for_long', 40)}
 - Max RSI per short: {params.get('max_rsi_for_short', 60)}
+- Min score per aprire trade: {params.get('min_score_trade', 0.6)}
+- ATR SL factor: {params.get('atr_sl_factor', 1.2)} | trailing ATR: {params.get('trailing_atr_factor', 1.0)} | breakeven R: {params.get('breakeven_R', 1.0)}
+- Reverse abilitato: {params.get('reverse_enabled', True)} | Max daily trades: {params.get('max_daily_trades', 3)}
+
+CONTROLLI DI RISCHIO ATTIVI (da Learning Agent):
+- Disable symbols: {controls.get('disable_symbols')}
+- Disable regimes: {controls.get('disable_regimes')}
+- Max trades/hour: {controls.get('max_trades_per_hour')} | cooldown minutes: {controls.get('cooldown_minutes')}
+- Safe mode: {controls.get('safe_mode')} | max trades/day: {controls.get('max_trades_per_day')} | size cap: {controls.get('size_cap')}
+Confidence del modello: {confidence}
 
 USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
 """
@@ -238,13 +343,70 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
         logger.info(f"AI Raw Response: {content}") # Debug nel log
         
         decision_json = json.loads(content)
-        
+
+        state = load_master_state()
+        open_hour_count = count_recent_actions(state.get('decisions', []), 60, action_filter=["OPEN_LONG", "OPEN_SHORT"])
+        open_day_count = count_recent_actions(state.get('decisions', []), 24 * 60, action_filter=["OPEN_LONG", "OPEN_SHORT"])
+        symbol_cooldowns = state.get('symbol_cooldowns', {}) or {}
+        now_ts = datetime.utcnow().timestamp()
+
         valid_decisions = []
         for d in decision_json.get("decisions", []):
-            try: 
+            symbol_key = (d.get('symbol') or '').upper()
+            rationale_suffix = []
+
+            # Disable lists
+            if symbol_key in [s.upper() for s in controls.get('disable_symbols', [])]:
+                d['action'] = 'HOLD'
+                rationale_suffix.append('blocked by disable_symbols')
+
+            regime = assets_summary.get(symbol_key, {}).get('trend') if assets_summary else None
+            if regime and regime.lower() in [str(r).lower() for r in controls.get('disable_regimes', [])]:
+                d['action'] = 'HOLD'
+                rationale_suffix.append('blocked by regime filter')
+
+            # Cooldown per symbol
+            cd_minutes = controls.get('cooldown_minutes') or 0
+            if cd_minutes > 0:
+                last_ts = symbol_cooldowns.get(symbol_key, 0)
+                if last_ts and (now_ts - last_ts) < cd_minutes * 60 and is_open_action(d.get('action', '')):
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('cooldown active')
+
+            # Trade frequency limits
+            if is_open_action(d.get('action', '')):
+                limit_hour = controls.get('max_trades_per_hour') or 0
+                limit_day = controls.get('max_trades_per_day') or params.get('max_daily_trades')
+
+                if limit_hour and open_hour_count >= limit_hour:
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('max trades/hour reached')
+                if limit_day and open_day_count >= limit_day:
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('max trades/day reached')
+
+            # Safe mode sizing
+            if controls.get('safe_mode') and is_open_action(d.get('action', '')):
+                if controls.get('size_cap') is not None:
+                    d['size_pct'] = min(d.get('size_pct', 0.0), controls['size_cap'])
+                d['leverage'] = min(d.get('leverage', 1.0), 3.0)
+                rationale_suffix.append('safe_mode')
+            elif controls.get('size_cap') is not None and is_open_action(d.get('action', '')):
+                d['size_pct'] = min(d.get('size_pct', 0.0), controls['size_cap'])
+
+            if rationale_suffix:
+                d['rationale'] = f"{d.get('rationale','')} | {'; '.join(rationale_suffix)}".strip()
+
+            try:
                 valid_dec = Decision(**d)
+                # Update counters if we will place an open trade
+                if is_open_action(valid_dec.action):
+                    open_hour_count += 1
+                    open_day_count += 1
+                    symbol_cooldowns[symbol_key] = now_ts
+
                 valid_decisions.append(valid_dec)
-                
+
                 # Salva la decisione per la dashboard
                 save_ai_decision({
                     'symbol': valid_dec.symbol,
@@ -254,8 +416,12 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                     'rationale': valid_dec.rationale,
                     'analysis_summary': decision_json.get("analysis_summary", "")
                 })
-            except Exception as e: 
+            except Exception as e:
                 logger.warning(f"Invalid decision: {e}")
+
+        # Persist updated cooldowns
+        state['symbol_cooldowns'] = symbol_cooldowns
+        save_master_state(state)
 
         return {
             "analysis": decision_json.get("analysis_summary", "No analysis"),
