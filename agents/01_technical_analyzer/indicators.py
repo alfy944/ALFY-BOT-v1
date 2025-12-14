@@ -69,24 +69,57 @@ class CryptoTechnicalAnalysisBybit:
         macd_line, macd_sig, macd_diff = self.calculate_macd(df["close"])
         df["macd_line"] = macd_line
         df["macd_signal"] = macd_sig
+        df["macd_hist"] = macd_diff
         df["rsi_7"] = self.calculate_rsi(df["close"], 7)
         df["rsi_14"] = self.calculate_rsi(df["close"], 14)
         df["atr_14"] = self.calculate_atr(df["high"], df["low"], df["close"], 14)
-        
+
+        if len(df) < 3:
+            return {}
+
         last = df.iloc[-1]
+        prev = df.iloc[-2]
+        prev2 = df.iloc[-3]
         pp = self.calculate_pivot_points(last["high"], last["low"], last["close"])
 
         trend = "BULLISH" if last["close"] > last["ema_50"] else "BEARISH"
         macd_trend = "POSITIVE" if last["macd_line"] > last["macd_signal"] else "NEGATIVE"
+
+        # Momentum exit conditions (per-bar, candle close driven)
+        rsi_below_50 = last["rsi_14"] < 50
+        rsi_above_50 = last["rsi_14"] > 50
+        macd_hist_falling = (last["macd_hist"] < prev["macd_hist"]) and (prev["macd_hist"] < prev2["macd_hist"])
+        macd_hist_rising = (last["macd_hist"] > prev["macd_hist"]) and (prev["macd_hist"] > prev2["macd_hist"])
+        close_below_ema20 = last["close"] < last["ema_20"]
+        close_above_ema20 = last["close"] > last["ema_20"]
+
+        long_exit_votes = sum([rsi_below_50, macd_hist_falling, close_below_ema20])
+        short_exit_votes = sum([rsi_above_50, macd_hist_rising, close_above_ema20])
 
         return {
             "symbol": ticker,
             "price": last["close"],
             "trend": trend,
             "rsi": round(last["rsi_14"], 2),
+            "rsi_7": round(last["rsi_7"], 2),
             "macd": macd_trend,
+            "macd_hist": round(last["macd_hist"], 6),
             "support": round(last["close"] - (2 * last["atr_14"]), 2),
             "resistance": round(last["close"] + (2 * last["atr_14"]), 2),
+            "momentum_exit": {
+                "long": long_exit_votes >= 2,
+                "short": short_exit_votes >= 2,
+                "votes": {
+                    "long": long_exit_votes,
+                    "short": short_exit_votes,
+                    "rsi_below_50": bool(rsi_below_50),
+                    "rsi_above_50": bool(rsi_above_50),
+                    "macd_hist_falling": bool(macd_hist_falling),
+                    "macd_hist_rising": bool(macd_hist_rising),
+                    "close_below_ema20": bool(close_below_ema20),
+                    "close_above_ema20": bool(close_above_ema20),
+                },
+            },
             "details": {
                 "ema_20": round(last["ema_20"], 2),
                 "ema_50": round(last["ema_50"], 2),

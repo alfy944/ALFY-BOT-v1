@@ -65,6 +65,7 @@ LEARNING_AGENT_URL = os.getenv("LEARNING_AGENT_URL", "http://10_learning_agent:8
 DEFAULT_SIZE_PCT = float(os.getenv("DEFAULT_SIZE_PCT", "0.15"))
 
 file_lock = Lock()
+position_risk_meta: Dict[str, dict] = {}
 
 # =========================================================
 # HELPERS
@@ -337,21 +338,29 @@ def record_trade_for_learning(
 # =========================================================
 # ATR FUNCTIONS
 # =========================================================
-def get_atr_for_symbol(symbol: str) -> Tuple[Optional[float], Optional[float]]:
+def get_market_risk_data(symbol: str) -> Dict[str, Any]:
     try:
         clean_id = bybit_symbol_id(symbol)  # BTCUSDT
         with httpx.Client(timeout=5.0) as client:
             r = client.post(f"{TECHNICAL_ANALYZER_URL}/analyze_multi_tf", json={"symbol": clean_id})
             if r.status_code == 200:
-                d = r.json()
-                if d.get("atr") and d.get("price"):
-                    return float(d["atr"]), float(d["price"])
+                d = r.json() or {}
+                return {
+                    "atr": to_float(d.get("details", {}).get("atr") or d.get("atr")),
+                    "price": to_float(d.get("price")),
+                    "momentum_exit": (d.get("momentum_exit") or {}),
+                    "trend": d.get("trend"),
+                    "macd_hist": to_float(d.get("macd_hist"), None),
+                    "rsi": to_float(d.get("rsi"), None),
+                    "ema_20": to_float((d.get("details", {}) or {}).get("ema_20"), None),
+                }
     except Exception:
         pass
-    return None, None
+    return {"atr": None, "price": None, "momentum_exit": {}}
 
 def get_trailing_distance_pct(symbol: str, mark_price: float) -> float:
-    atr, price = get_atr_for_symbol(symbol)
+    data = get_market_risk_data(symbol)
+    atr, price = data.get("atr"), data.get("price")
     if atr and price and price > 0:
         base = symbol_base(symbol)
         mult = float(ATR_MULTIPLIERS.get(base, ATR_MULTIPLIER_DEFAULT))
@@ -406,20 +415,87 @@ def check_and_update_trailing_stops():
                 roi_raw = (entry_price - mark_price) / entry_price
             roi = roi_raw * leverage
 
-            if roi < TRAILING_ACTIVATION_PCT:
+            sym_id = bybit_symbol_id(symbol)
+            risk_data = get_market_risk_data(symbol)
+            atr = risk_data.get("atr")
+            momentum_exit = risk_data.get("momentum_exit") or {}
+            ema_20 = to_float(risk_data.get("ema_20"), 0.0)
+
+            # Momentum-based soft exit (2/3 conditions)
+            if momentum_exit.get(side_dir):
+                print(f"⏱️ Momentum exit triggered for {symbol} ({side_dir}) - closing position")
+                execute_close_position(symbol)
                 continue
 
-            trailing_distance = get_trailing_distance_pct(symbol, mark_price)
-            new_sl_price = None
+            # Track initial SL distance per symbol for 1R calculations
+            meta = position_risk_meta.get(sym_id, {})
+            initial_sl_price = meta.get("initial_sl")
+            if not initial_sl_price or abs(meta.get("entry_price", 0) - entry_price) > 0.5:
+                base_sl = sl_current
+                if base_sl == 0.0:
+                    if atr:
+                        base_sl = entry_price - (atr * 1.2) if side_dir == "long" else entry_price + (atr * 1.2)
+                    else:
+                        base_sl = entry_price * (1 - DEFAULT_INITIAL_SL_PCT) if side_dir == "long" else entry_price * (1 + DEFAULT_INITIAL_SL_PCT)
+                position_risk_meta[sym_id] = {
+                    "entry_price": entry_price,
+                    "initial_sl": base_sl,
+                }
+                initial_sl_price = base_sl
 
-            if side_dir == "long":
-                target_sl = mark_price * (1 - trailing_distance)
-                if sl_current == 0.0 or target_sl > sl_current:
-                    new_sl_price = target_sl
-            else:
-                target_sl = mark_price * (1 + trailing_distance)
-                if sl_current == 0.0 or target_sl < sl_current:
-                    new_sl_price = target_sl
+            if not initial_sl_price:
+                initial_sl_price = sl_current
+
+            risk_distance = 0.0
+            if initial_sl_price and entry_price:
+                risk_distance = (entry_price - initial_sl_price) if side_dir == "long" else (initial_sl_price - entry_price)
+
+            # Break-even: lock stop to entry after 1R
+            new_sl_price = None
+            if risk_distance > 0:
+                profit_distance = (mark_price - entry_price) if side_dir == "long" else (entry_price - mark_price)
+                if profit_distance >= risk_distance:
+                    target_be = entry_price
+                    if side_dir == "long":
+                        if sl_current == 0.0 or target_be > sl_current:
+                            new_sl_price = target_be
+                    else:
+                        if sl_current == 0.0 or target_be < sl_current:
+                            new_sl_price = target_be
+                    position_risk_meta[sym_id]["breakeven_reached"] = True
+
+            # Trailing ATR after break-even
+            if (position_risk_meta.get(sym_id, {}).get("breakeven_reached") or sl_current == entry_price) and atr:
+                trailing_target = mark_price - (atr * 1.0) if side_dir == "long" else mark_price + (atr * 1.0)
+                if side_dir == "long":
+                    if sl_current == 0.0 or trailing_target > sl_current:
+                        new_sl_price = max(new_sl_price or 0, trailing_target)
+                else:
+                    if sl_current == 0.0 or trailing_target < sl_current:
+                        new_sl_price = trailing_target if new_sl_price is None else min(new_sl_price, trailing_target)
+
+                # Structure-aware trailing using EMA20 as dynamic support/resistance
+                if ema_20 > 0 and atr:
+                    if side_dir == "long":
+                        structure_sl = ema_20 - (atr * 0.2)
+                        if sl_current == 0.0 or structure_sl > sl_current:
+                            new_sl_price = max(new_sl_price or 0, structure_sl)
+                    else:
+                        structure_sl = ema_20 + (atr * 0.2)
+                        if sl_current == 0.0 or structure_sl < sl_current:
+                            new_sl_price = structure_sl if new_sl_price is None else min(new_sl_price, structure_sl)
+
+            # Fallback trailing distance if ATR unavailable but break-even reached
+            if new_sl_price is None and (position_risk_meta.get(sym_id, {}).get("breakeven_reached") or sl_current == entry_price):
+                trailing_distance = get_trailing_distance_pct(symbol, mark_price)
+                if side_dir == "long":
+                    target_sl = mark_price * (1 - trailing_distance)
+                    if sl_current == 0.0 or target_sl > sl_current:
+                        new_sl_price = target_sl
+                else:
+                    target_sl = mark_price * (1 + trailing_distance)
+                    if sl_current == 0.0 or target_sl < sl_current:
+                        new_sl_price = target_sl
 
             if not new_sl_price:
                 continue
@@ -428,8 +504,8 @@ def check_and_update_trailing_stops():
             position_idx = get_position_idx_from_position(p)
 
             print(
-                f"🏃 TRAILING STOP {symbol} ROI={roi*100:.2f}% "
-                f"SL {sl_current} -> {price_str} (dist={trailing_distance*100:.2f}%) idx={position_idx}"
+                f"🏃 SL UPDATE {symbol} ROI={roi*100:.2f}% "
+                f"SL {sl_current} -> {price_str} (ATR={atr}) idx={position_idx}"
             )
 
             try:
@@ -803,11 +879,46 @@ def check_smart_reverse():
                         "size_pct": (recovery_size_pct * 100) if action == "REVERSE" else 0,
                     })
 
+                    action_to_execute = action
                     if action == "REVERSE":
+                        market_context = get_market_risk_data(symbol)
+                        trend = (market_context.get("trend") or "").upper()
+                        macd_hist = to_float(market_context.get("macd_hist"), 0.0)
+                        rsi_val = to_float(market_context.get("rsi"), 50.0)
+
+                        trend_flip = (trend == "BEARISH" and side_dir == "long") or (trend == "BULLISH" and side_dir == "short")
+                        macd_alignment = (macd_hist < 0 and side_dir == "long") or (macd_hist > 0 and side_dir == "short")
+                        rsi_alignment = (rsi_val < 45 and side_dir == "long") or (rsi_val > 55 and side_dir == "short")
+                        context_score = sum([trend_flip, macd_alignment, rsi_alignment]) / 3.0
+
+                        if confidence < 80 or context_score < 0.75:
+                            print(
+                                f"✋ Reverse bloccato: conf {confidence:.0f}%, contesto {context_score*100:.0f}% | "
+                                "eseguo CLOSE conservativo"
+                            )
+                            action_to_execute = "CLOSE"
+                        else:
+                            action_to_execute = "CLOSE_COOLDOWN"
+
+                    if action_to_execute == "CLOSE_COOLDOWN":
+                        print(f"🔒 Chiudo {symbol} e imposto cooldown per evitare reverse immediato")
+                        if execute_close_position(symbol):
+                            now_ts = time.time()
+                            reverse_cooldown_tracker[sym_id] = now
+                            try:
+                                ensure_parent_dir(COOLDOWN_FILE)
+                                cooldowns = load_json(COOLDOWN_FILE, default={})
+                                cooldowns[sym_id] = now_ts
+                                cooldowns[f"{sym_id}_long"] = now_ts
+                                cooldowns[f"{sym_id}_short"] = now_ts
+                                save_json(COOLDOWN_FILE, cooldowns)
+                            except Exception:
+                                pass
+                    elif action_to_execute == "REVERSE":
                         print(f"🔄 Eseguo REVERSE per {symbol} con size {recovery_size_pct*100:.1f}%")
                         if execute_reverse(symbol, side_dir, recovery_size_pct):
                             reverse_cooldown_tracker[sym_id] = now
-                    elif action == "CLOSE":
+                    elif action_to_execute == "CLOSE":
                         print(f"🔒 Eseguo CLOSE per {symbol}")
                         execute_close_position(symbol)
                     else:
@@ -978,7 +1089,22 @@ def open_position(order: OrderRequest):
                             "existing_side": existing_dir,
                         }
                     else:
-                        print(f"🔄 REVERSE PERMESSO: {existing_dir} → {requested_dir} su {sym_ccxt}")
+                        # Reverse diretto non consentito: chiudiamo e imponiamo cooldown
+                        print(f"⏳ REVERSE BLOCCATO: {existing_dir} aperta, rifiuto {requested_dir} su {sym_ccxt}")
+                        try:
+                            ensure_parent_dir(COOLDOWN_FILE)
+                            cooldowns = load_json(COOLDOWN_FILE, default={})
+                            now_ts = time.time()
+                            cooldowns[symbol_key] = now_ts
+                            cooldowns[f"{symbol_key}_{existing_dir}"] = now_ts
+                            save_json(COOLDOWN_FILE, cooldowns)
+                        except Exception:
+                            pass
+                        return {
+                            "status": "reverse_blocked",
+                            "msg": f"Reverse diretto non consentito su {sym_ccxt}. Chiudi prima la posizione esistente.",
+                            "existing_side": existing_dir,
+                        }
         except Exception as e:
             print(f"⚠️ Errore check posizioni esistenti: {e}")
 
@@ -989,9 +1115,10 @@ def open_position(order: OrderRequest):
             cooldown_key = f"{symbol_key}_{requested_dir}"  # BTCUSDT_long
             last_close_time = to_float(cooldowns.get(cooldown_key), 0.0)
             elapsed = time.time() - last_close_time
+            cooldown_window = max(COOLDOWN_MINUTES, REVERSE_COOLDOWN_MINUTES)
 
-            if elapsed < (COOLDOWN_MINUTES * 60):
-                minutes_left = COOLDOWN_MINUTES - (elapsed / 60)
+            if elapsed < (cooldown_window * 60):
+                minutes_left = cooldown_window - (elapsed / 60)
                 print(f"⏳ COOLDOWN: {sym_ccxt} {requested_dir} - ancora {minutes_left:.1f} minuti")
                 return {
                     "status": "cooldown",
@@ -1014,6 +1141,9 @@ def open_position(order: OrderRequest):
         if price <= 0:
             return {"status": "error", "msg": "Invalid price"}
 
+        risk_data = get_market_risk_data(sym_id)
+        atr_value = risk_data.get("atr")
+
         target_market = exchange.market(sym_ccxt)
         info = target_market.get("info", {}) or {}
         lot_filter = info.get("lotSizeFilter", {}) or {}
@@ -1029,8 +1159,11 @@ def open_position(order: OrderRequest):
             final_qty_d = Decimal(str(min_qty))
         final_qty = float("{:f}".format(final_qty_d.normalize()))
 
-        sl_pct = float(order.sl_pct) if float(order.sl_pct) > 0 else DEFAULT_INITIAL_SL_PCT
-        sl_price = price * (1 - sl_pct) if requested_dir == "long" else price * (1 + sl_pct)
+        if atr_value:
+            sl_price = price - (atr_value * 1.2) if requested_dir == "long" else price + (atr_value * 1.2)
+        else:
+            sl_pct = float(order.sl_pct) if float(order.sl_pct) > 0 else DEFAULT_INITIAL_SL_PCT
+            sl_price = price * (1 - sl_pct) if requested_dir == "long" else price * (1 + sl_pct)
         sl_str = exchange.price_to_precision(sym_ccxt, sl_price)
 
         pos_idx = direction_to_position_idx(requested_dir)
@@ -1042,6 +1175,11 @@ def open_position(order: OrderRequest):
             params["positionIdx"] = pos_idx
 
         res = exchange.create_order(sym_ccxt, "market", requested_side, final_qty, params=params)
+        position_risk_meta[sym_id] = {
+            "entry_price": price,
+            "initial_sl": sl_price,
+            "breakeven_reached": False,
+        }
         return {"status": "executed", "id": res.get("id")}
 
     except Exception as e:
