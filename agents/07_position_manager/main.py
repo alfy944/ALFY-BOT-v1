@@ -275,7 +275,9 @@ def record_closed_trade(
     leverage: float,
     size_pct: float,
     duration_minutes: int,
-    market_conditions: Optional[dict] = None
+    pos_roi_pct: Optional[float] = None,
+    equity_return_pct: Optional[float] = None,
+    market_conditions: Optional[dict] = None,
 ):
     try:
         with httpx.Client(timeout=5.0) as client:
@@ -291,6 +293,8 @@ def record_closed_trade(
                     "leverage": leverage,
                     "size_pct": size_pct,
                     "duration_minutes": duration_minutes,
+                    "pos_roi_pct": pos_roi_pct,
+                    "equity_return_pct": equity_return_pct,
                     "market_conditions": market_conditions or {},
                 },
             )
@@ -306,7 +310,8 @@ def record_trade_for_learning(
     exit_price: float,
     leverage: float,
     duration_minutes: int,
-    market_conditions: Optional[dict] = None
+    market_conditions: Optional[dict] = None,
+    size_pct: Optional[float] = None,
 ):
     try:
         side_dir = normalize_position_side(side_raw) or "long"
@@ -319,17 +324,21 @@ def record_trade_for_learning(
             else:
                 pnl_raw = (entry_price - exit_price) / entry_price
 
-        pnl_pct = pnl_raw * leverage * 100.0
+        pos_roi_pct = pnl_raw * leverage * 100.0
+        resolved_size_pct = DEFAULT_SIZE_PCT if size_pct is None else size_pct
+        equity_return_pct = pos_roi_pct * resolved_size_pct
 
         record_closed_trade(
             symbol=asset,
             side=side_dir,
             entry_price=entry_price,
             exit_price=exit_price,
-            pnl_pct=pnl_pct,
+            pnl_pct=pos_roi_pct,
             leverage=leverage,
-            size_pct=DEFAULT_SIZE_PCT,
+            size_pct=resolved_size_pct,
             duration_minutes=duration_minutes,
+            pos_roi_pct=pos_roi_pct,
+            equity_return_pct=equity_return_pct,
             market_conditions=market_conditions or {},
         )
     except Exception as e:
@@ -350,13 +359,15 @@ def get_market_risk_data(symbol: str) -> Dict[str, Any]:
                     "price": to_float(d.get("price")),
                     "momentum_exit": (d.get("momentum_exit") or {}),
                     "trend": d.get("trend"),
+                    "regime": d.get("regime"),
+                    "volatility": d.get("volatility"),
                     "macd_hist": to_float(d.get("macd_hist"), None),
                     "rsi": to_float(d.get("rsi"), None),
                     "ema_20": to_float((d.get("details", {}) or {}).get("ema_20"), None),
                 }
     except Exception:
         pass
-    return {"atr": None, "price": None, "momentum_exit": {}}
+    return {"atr": None, "price": None, "momentum_exit": {}, "regime": None, "volatility": None}
 
 def get_trailing_distance_pct(symbol: str, mark_price: float) -> float:
     data = get_market_risk_data(symbol)
@@ -621,6 +632,7 @@ def execute_close_position(symbol: str) -> bool:
 
         exchange.create_order(sym_ccxt, "market", close_side, size, params=params)
 
+        risk_meta = position_risk_meta.get(sym_id, {})
         record_trade_for_learning(
             symbol=sym_id,
             side_raw=side_dir,
@@ -628,7 +640,8 @@ def execute_close_position(symbol: str) -> bool:
             exit_price=mark_price,
             leverage=leverage,
             duration_minutes=0,
-            market_conditions={},
+            market_conditions=risk_meta.get("market_conditions", {}),
+            size_pct=risk_meta.get("size_pct"),
         )
 
         # Cooldown
@@ -775,6 +788,7 @@ def check_recent_closes_and_save_cooldown():
                     entry_price = to_float(item.get("avgEntryPrice"), 0.0)
                     exit_price = to_float(item.get("avgExitPrice"), 0.0)
                     leverage = max(1.0, to_float(item.get("leverage"), 1.0))
+                    risk_meta = position_risk_meta.get(symbol_raw, {})
 
                     created_time_ms = int(to_float(item.get("createdTime"), close_time_ms))
                     duration_minutes = int((close_time_ms - created_time_ms) / 1000 / 60)
@@ -786,7 +800,8 @@ def check_recent_closes_and_save_cooldown():
                         exit_price=exit_price,
                         leverage=leverage,
                         duration_minutes=duration_minutes,
-                        market_conditions={"closed_by": "bybit_sl_tp"},
+                        market_conditions=risk_meta.get("market_conditions", {"closed_by": "bybit_sl_tp"}),
+                        size_pct=risk_meta.get("size_pct"),
                     )
                 except Exception as e:
                     print(f"⚠️ Errore recording auto-closed trade: {e}")
@@ -1175,10 +1190,19 @@ def open_position(order: OrderRequest):
             params["positionIdx"] = pos_idx
 
         res = exchange.create_order(sym_ccxt, "market", requested_side, final_qty, params=params)
+        initial_risk_pct = 0.0
+        try:
+            initial_risk_pct = abs(price - sl_price) / price * float(order.leverage) * 100
+        except Exception:
+            pass
         position_risk_meta[sym_id] = {
             "entry_price": price,
             "initial_sl": sl_price,
             "breakeven_reached": False,
+            "size_pct": float(order.size_pct),
+            "leverage": float(order.leverage),
+            "market_conditions": {**(risk_data or {}), "initial_risk_pct": round(initial_risk_pct, 4)},
+            "opened_at": time.time(),
         }
         return {"status": "executed", "id": res.get("id")}
 

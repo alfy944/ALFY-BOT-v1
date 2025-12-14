@@ -102,7 +102,9 @@ class TradeRecord(BaseModel):
     side: str
     entry_price: float
     exit_price: Optional[float] = None
-    pnl_pct: Optional[float] = None
+    pnl_pct: Optional[float] = None  # legacy leveraged ROI
+    pos_roi_pct: Optional[float] = None
+    equity_return_pct: Optional[float] = None
     leverage: float
     size_pct: float
     duration_minutes: Optional[int] = None
@@ -151,6 +153,20 @@ def load_current_controls() -> Dict[str, Any]:
     return merged
 
 
+def trade_equity_return(trade: Dict[str, Any]) -> float:
+    if trade.get('equity_return_pct') is not None:
+        return float(trade.get('equity_return_pct') or 0)
+    # fallback: approximate using leveraged ROI times size_pct
+    base_roi = trade.get('pnl_pct') if trade.get('pnl_pct') is not None else trade.get('pos_roi_pct')
+    if base_roi is None:
+        return 0.0
+    size_pct = trade.get('size_pct', 0)
+    try:
+        return float(base_roi) * float(size_pct)
+    except Exception:
+        return 0.0
+
+
 def get_recent_trades(hours: int = 48) -> List[Dict[str, Any]]:
     """Get trades from the last N hours"""
     all_trades = load_json_file(TRADING_HISTORY_FILE, [])
@@ -186,7 +202,7 @@ def calculate_performance(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
             "losing_trades": 0,
         }
     
-    completed_trades = [t for t in trades if t.get('pnl_pct') is not None]
+    completed_trades = [t for t in trades if (t.get('pnl_pct') is not None) or (t.get('equity_return_pct') is not None)]
     
     if not completed_trades:
         return {
@@ -199,9 +215,10 @@ def calculate_performance(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
             "losing_trades": 0,
         }
     
-    total_pnl = sum(t.get('pnl_pct', 0) for t in completed_trades)
-    winning_trades = [t for t in completed_trades if t.get('pnl_pct', 0) > 0]
-    losing_trades = [t for t in completed_trades if t.get('pnl_pct', 0) <= 0]
+    equity_returns = [trade_equity_return(t) for t in completed_trades]
+    total_pnl = sum(equity_returns)
+    winning_trades = [t for t, ret in zip(completed_trades, equity_returns) if ret > 0]
+    losing_trades = [t for t, ret in zip(completed_trades, equity_returns) if ret <= 0]
     
     win_rate = len(winning_trades) / len(completed_trades) if completed_trades else 0
     
@@ -212,8 +229,8 @@ def calculate_performance(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
     cumulative_pnl = 0
     peak = 0
     max_drawdown = 0
-    for trade in completed_trades:
-        cumulative_pnl += trade.get('pnl_pct', 0)
+    for ret in equity_returns:
+        cumulative_pnl += ret
         peak = max(peak, cumulative_pnl)
         drawdown = peak - cumulative_pnl
         max_drawdown = max(max_drawdown, drawdown)
@@ -237,16 +254,16 @@ def compute_time_in_market_hours(trades: List[Dict[str, Any]]) -> float:
 def compute_useless_trades(trades: List[Dict[str, Any]]) -> int:
     useless = 0
     for t in trades:
-        pnl_pct = t.get('pnl_pct')
-        if pnl_pct is None:
+        equity_ret = trade_equity_return(t)
+        if equity_ret is None:
             continue
-        if abs(pnl_pct) < 0.05:
+        if abs(equity_ret) < 0.05:
             useless += 1  # trade chiuso a 0 / BE
             continue
         # penalizza trade piccoli (<0.3R). Usando pnl_pct come proxy quando manca R esplicito.
         initial_risk = t.get('market_conditions', {}).get('initial_risk_pct')
         baseline_r = abs(initial_risk) if initial_risk else 1.0
-        if pnl_pct < 0.3 * baseline_r:
+        if equity_ret < 0.3 * baseline_r:
             useless += 1
         if t.get('market_conditions', {}).get('regime') == 'range':
             useless += 1
@@ -300,10 +317,10 @@ def segment_trades_by_regime(trades: List[Dict[str, Any]]) -> Dict[str, List[Dic
 
     for t in trades:
         conditions = t.get('market_conditions', {}) or {}
-        regime = conditions.get('regime') or conditions.get('trend')
+        regime = (conditions.get('regime') or conditions.get('trend') or '').lower()
         volatility = conditions.get('volatility')
 
-        if regime in ('trend', 'bullish', 'bearish'):
+        if regime in ('trend', 'bullish', 'bearish', 'transition'):
             regimes["trend"].append(t)
         elif regime == 'range':
             regimes["range"].append(t)
@@ -319,9 +336,9 @@ def segment_trades_by_regime(trades: List[Dict[str, Any]]) -> Dict[str, List[Dic
 
 
 def should_enable_safe_mode(trades: List[Dict[str, Any]], drawdown: float, dd_threshold: float = 5.0) -> bool:
-    completed = [t for t in trades if t.get('pnl_pct') is not None]
+    completed = [t for t in trades if (t.get('pnl_pct') is not None) or (t.get('equity_return_pct') is not None)]
     last_three = completed[-3:]
-    if len(last_three) == 3 and all((t.get('pnl_pct', 0) <= 0) for t in last_three):
+    if len(last_three) == 3 and all((trade_equity_return(t) <= 0) for t in last_three):
         return True
     return drawdown > dd_threshold
 
@@ -424,22 +441,23 @@ def backtest_strategy(trades: List[Dict[str, Any]], new_params: Dict[str, Any]) 
     Simple backtest: simulate how trades would have performed with new parameters.
     This is a simplified version - in practice, you'd re-evaluate entry/exit decisions.
     """
-    # For simplicity, we'll adjust the PnL based on leverage and size changes
-    current_params = load_current_params()
-    
     adjusted_trades = []
-    
+
     for trade in trades:
         if trade.get('pnl_pct') is None:
             continue
-        
-        # Simulate adjustment based on parameter changes
-        leverage_ratio = new_params.get('default_leverage', 5) / current_params.get('default_leverage', 5)
-        size_ratio = new_params.get('size_pct', 0.15) / current_params.get('size_pct', 0.15)
-        
-        # Adjust PnL (simplified - real backtest would be more complex)
-        adjusted_pnl = trade['pnl_pct'] * leverage_ratio * size_ratio
-        adjusted_trades.append({**trade, 'pnl_pct': adjusted_pnl})
+
+        size_ratio = new_params.get('size_pct', 0.15) / max(trade.get('size_pct', 0.15), 1e-6)
+
+        base_equity_return = trade_equity_return(trade)
+        adjusted_equity_return = base_equity_return * size_ratio
+
+        adjusted_trades.append({
+            **trade,
+            'equity_return_pct': adjusted_equity_return,
+            'pos_roi_pct': trade.get('pos_roi_pct') if trade.get('pos_roi_pct') is not None else trade.get('pnl_pct'),
+            'pnl_pct': trade.get('pnl_pct'),
+        })
 
     performance = calculate_performance(adjusted_trades)
     reward_data = compute_reward(adjusted_trades)
@@ -726,9 +744,14 @@ You MUST respond ONLY with valid JSON in this format:
 async def evolution_loop():
     """Background task that runs evolution every N hours"""
     interval_seconds = EVOLUTION_INTERVAL_HOURS * 3600
-    
+
     logger.info(f"🔄 Starting evolution loop (every {EVOLUTION_INTERVAL_HOURS} hours)")
-    
+
+    try:
+        await profit_evolution_cycle()
+    except Exception as e:
+        logger.error(f"Initial evolution cycle failed: {e}")
+
     while True:
         try:
             await asyncio.sleep(interval_seconds)

@@ -85,6 +85,17 @@ class CryptoTechnicalAnalysisBybit:
         trend = "BULLISH" if last["close"] > last["ema_50"] else "BEARISH"
         macd_trend = "POSITIVE" if last["macd_line"] > last["macd_signal"] else "NEGATIVE"
 
+        atr_value = last["atr_14"]
+        distance_from_ema50 = abs(last["close"] - last["ema_50"])
+        volatility_ratio = (atr_value / last["close"]) if last["close"] else 0
+        volatility = "high" if volatility_ratio > 0.02 else "low" if volatility_ratio < 0.01 else "normal"
+
+        regime = "trend"
+        if atr_value and distance_from_ema50 <= atr_value * 0.25:
+            regime = "range"
+        elif (trend == "BULLISH" and macd_trend == "NEGATIVE") or (trend == "BEARISH" and macd_trend == "POSITIVE"):
+            regime = "transition"
+
         # Momentum exit conditions (per-bar, candle close driven)
         rsi_below_50 = last["rsi_14"] < 50
         rsi_above_50 = last["rsi_14"] > 50
@@ -100,6 +111,8 @@ class CryptoTechnicalAnalysisBybit:
             "symbol": ticker,
             "price": last["close"],
             "trend": trend,
+            "regime": regime,
+            "volatility": volatility,
             "rsi": round(last["rsi_14"], 2),
             "rsi_7": round(last["rsi_7"], 2),
             "macd": macd_trend,

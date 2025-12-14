@@ -287,6 +287,7 @@ def decide_batch(payload: AnalysisPayload):
                 "price": t.get('price'),
                 "rsi_7": t.get('details', {}).get('rsi_7') or t.get('rsi_7'),
                 "trend": t.get('trend'),
+                "regime": t.get('regime'),
                 "macd_hist": t.get('macd_hist'),
                 "macd": t.get('macd')
             }
@@ -360,7 +361,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 d['action'] = 'HOLD'
                 rationale_suffix.append('blocked by disable_symbols')
 
-            regime = assets_summary.get(symbol_key, {}).get('trend') if assets_summary else None
+            regime = assets_summary.get(symbol_key, {}).get('regime') if assets_summary else None
             if regime and regime.lower() in [str(r).lower() for r in controls.get('disable_regimes', [])]:
                 d['action'] = 'HOLD'
                 rationale_suffix.append('blocked by regime filter')
