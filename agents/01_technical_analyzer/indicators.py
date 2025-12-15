@@ -104,8 +104,8 @@ class CryptoTechnicalAnalysisBybit:
         close_below_ema20 = last["close"] < last["ema_20"]
         close_above_ema20 = last["close"] > last["ema_20"]
 
-        long_exit_votes = sum([rsi_below_50, macd_hist_falling, close_below_ema20])
-        short_exit_votes = sum([rsi_above_50, macd_hist_rising, close_above_ema20])
+        long_exit_votes = sum([bool(rsi_below_50), bool(macd_hist_falling), bool(close_below_ema20)])
+        short_exit_votes = sum([bool(rsi_above_50), bool(macd_hist_rising), bool(close_above_ema20)])
 
         return {
             "symbol": ticker,
@@ -120,8 +120,8 @@ class CryptoTechnicalAnalysisBybit:
             "support": round(last["close"] - (2 * last["atr_14"]), 2),
             "resistance": round(last["close"] + (2 * last["atr_14"]), 2),
             "momentum_exit": {
-                "long": long_exit_votes >= 2,
-                "short": short_exit_votes >= 2,
+                "long": bool(long_exit_votes >= 2),
+                "short": bool(short_exit_votes >= 2),
                 "votes": {
                     "long": long_exit_votes,
                     "short": short_exit_votes,

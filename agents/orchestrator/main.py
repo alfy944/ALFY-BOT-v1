@@ -236,6 +236,10 @@ async def analysis_cycle():
                     print(f"        ⚠️ Dati tecnici vuoti per {s}")
                     continue
 
+                if isinstance(t, dict) and t.get("error"):
+                    print(f"        ⚠️ Tech analyzer {s} error: {t.get('error')}")
+                    continue
+
                 assets_data[s] = {"tech": t}
             except Exception as e:
                 print(f"        ❌ Errore nel chiamare il technical analyzer per {s}: {e}")
