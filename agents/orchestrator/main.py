@@ -221,9 +221,28 @@ async def analysis_cycle():
         assets_data = {}
         for s in scan_list:
             try:
-                t = (await c.post(f"{URLS['tech']}/analyze_multi_tf", json={"symbol": s})).json()
+                resp = await c.post(
+                    f"{URLS['tech']}/analyze_multi_tf",
+                    json={"symbol": s},
+                    timeout=30,
+                )
+
+                if resp.status_code != 200:
+                    print(f"        ❌ Tech analyzer {s} status {resp.status_code}: {resp.text}")
+                    continue
+
+                t = resp.json()
+                if not t:
+                    print(f"        ⚠️ Dati tecnici vuoti per {s}")
+                    continue
+
+                if isinstance(t, dict) and t.get("error"):
+                    print(f"        ⚠️ Tech analyzer {s} error: {t.get('error')}")
+                    continue
+
                 assets_data[s] = {"tech": t}
-            except: pass
+            except Exception as e:
+                print(f"        ❌ Errore nel chiamare il technical analyzer per {s}: {e}")
         
         if not assets_data: 
             print("        ⚠️ Nessun dato tecnico disponibile")
