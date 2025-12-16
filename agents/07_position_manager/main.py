@@ -39,6 +39,8 @@ ATR_MULTIPLIERS = {
 TECHNICAL_ANALYZER_URL = os.getenv("TECHNICAL_ANALYZER_URL", "http://01_technical_analyzer:8000").strip()
 FALLBACK_TRAILING_PCT = float(os.getenv("FALLBACK_TRAILING_PCT", "0.025"))  # 2.5%
 DEFAULT_INITIAL_SL_PCT = float(os.getenv("DEFAULT_INITIAL_SL_PCT", "0.04"))  # 4%
+# --- BREAK-EVEN BUFFER ---
+BE_MIN_R = float(os.getenv("BE_MIN_R", "0.1"))  # require at least 0.1R before BE triggers
 # --- TIME-BASED EXIT ---
 TIME_EXIT_BARS = int(os.getenv("TIME_EXIT_BARS", "14"))
 TIME_EXIT_INTERVAL_MIN = int(os.getenv("TIME_EXIT_INTERVAL_MIN", "15"))
@@ -525,11 +527,12 @@ def check_and_update_trailing_stops():
                 side_dir == "short" and mark_price <= entry_price
             )
             be_conditions = []
-            if in_profit and ema_50 > 0:
+            profitable_enough = risk_distance > 0 and r_multiple >= BE_MIN_R
+            if in_profit and profitable_enough and ema_50 > 0:
                 be_conditions.append((side_dir == "long" and mark_price > ema_50) or (side_dir == "short" and mark_price < ema_50))
-            if in_profit and structure_break:
+            if in_profit and profitable_enough and structure_break:
                 be_conditions.append(bool(structure_break.get(side_dir)))
-            if in_profit and volume_spike:
+            if in_profit and profitable_enough and volume_spike:
                 be_conditions.append((side_dir == "long" and mark_price > entry_price) or (side_dir == "short" and mark_price < entry_price))
             if risk_distance > 0:
                 be_conditions.append(profit_distance >= risk_distance)
