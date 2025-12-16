@@ -1,5 +1,5 @@
 import asyncio, httpx, json, os
-from datetime import datetime, timedelta
+from datetime import datetime
 
 URLS = {
     "tech": "http://01_technical_analyzer:8000",
@@ -17,11 +17,8 @@ RETRY_DELAY = 2  # seconds
 
 AI_DECISIONS_FILE = "/data/ai_decisions.json"
 BYBIT_TICKERS_URL = "https://api.bybit.com/v5/market/tickers"
-BYBIT_INSTRUMENTS_URL = "https://api.bybit.com/v5/market/instruments-info"
 USE_TRENDING = os.getenv("USE_TRENDING_SYMBOLS", "true").lower() == "true"
 TRENDING_LIMIT = int(os.getenv("TRENDING_SYMBOLS_LIMIT", "6"))
-ONLY_NEW_SYMBOLS = os.getenv("ONLY_NEW_SYMBOLS", "true").lower() == "true"
-NEW_SYMBOL_MAX_DAYS = int(os.getenv("NEW_SYMBOL_MAX_DAYS", "30"))
 
 def save_monitoring_decision(positions_count: int, max_positions: int, positions_details: list, reason: str):
     """Salva la decisione di monitoraggio per la dashboard"""
@@ -108,63 +105,6 @@ async def fetch_trending_symbols(client: httpx.AsyncClient) -> list:
         print(f"⚠️ Error fetching trending symbols: {e}")
         return []
 
-def parse_listing_time(info: dict) -> datetime | None:
-    """Try to extract a listing/launch timestamp from Bybit instrument info."""
-    ts_candidate = None
-    for key in ("listTime", "launchTime", "createdTime"):
-        value = info.get(key)
-        if value:
-            ts_candidate = value
-            break
-
-    if ts_candidate is None:
-        return None
-
-    try:
-        ts_int = int(str(ts_candidate))
-        # list/launch timestamps may be in milliseconds
-        if ts_int > 1e12:
-            ts_int = ts_int // 1000
-        return datetime.utcfromtimestamp(ts_int)
-    except Exception:
-        return None
-
-async def fetch_listing_times(client: httpx.AsyncClient, symbols: list[str]) -> dict:
-    """Fetch listing metadata for a set of symbols and return a mapping {symbol: datetime}."""
-    listing_times = {}
-    for sym in symbols:
-        try:
-            resp = await client.get(BYBIT_INSTRUMENTS_URL, params={"category": "linear", "symbol": sym})
-            data = resp.json()
-            if data.get("retCode") != 0:
-                print(f"⚠️ Listing fetch failed for {sym}: {data.get('retMsg')}")
-                continue
-
-            rows = data.get("result", {}).get("list", []) if isinstance(data.get("result"), dict) else []
-            if not rows:
-                continue
-
-            ts = parse_listing_time(rows[0])
-            if ts:
-                listing_times[sym] = ts
-        except Exception as e:
-            print(f"⚠️ Error fetching listing time for {sym}: {e}")
-    return listing_times
-
-def filter_new_symbols_by_listing(symbols: list[str], listings: dict) -> list[str]:
-    """Keep only symbols whose listing date is within NEW_SYMBOL_MAX_DAYS."""
-    if not ONLY_NEW_SYMBOLS:
-        return symbols
-
-    cutoff = datetime.utcnow() - timedelta(days=NEW_SYMBOL_MAX_DAYS)
-    fresh = []
-    for sym in symbols:
-        ts = listings.get(sym)
-        if ts and ts >= cutoff:
-            fresh.append(sym)
-
-    return fresh
-
 async def get_symbol_universe(client: httpx.AsyncClient) -> list:
     """Return the list of symbols to scan, preferring Bybit trending if enabled."""
     if not USE_TRENDING:
@@ -172,18 +112,7 @@ async def get_symbol_universe(client: httpx.AsyncClient) -> list:
 
     trending = await fetch_trending_symbols(client)
     if trending:
-        listing_times = await fetch_listing_times(client, trending)
-        new_symbols = filter_new_symbols_by_listing(trending, listing_times)
-
-        if new_symbols:
-            print(f"🔥 Trending Bybit NEW listings: {new_symbols}")
-            return new_symbols
-
-        if ONLY_NEW_SYMBOLS:
-            print("⚠️ Nessun trending considerato nuovo entro la finestra configurata; skip scans.")
-            return []
-
-        print(f"🔥 Trending Bybit symbols (nessun nuovo rilevato): {trending}")
+        print(f"🔥 Trending Bybit symbols: {trending}")
         return trending
 
     print("⚠️ Nessun trending disponibile, uso lista di default")
