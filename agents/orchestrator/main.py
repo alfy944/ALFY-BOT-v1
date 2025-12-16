@@ -12,6 +12,8 @@ DEFAULT_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 MAX_POSITIONS = 3  # Numero massimo posizioni contemporanee
 REVERSE_THRESHOLD = 2.0  # Percentuale perdita per trigger reverse analysis
 CYCLE_INTERVAL = 60  # Secondi tra ogni ciclo di controllo (era 900)
+MAX_RETRIES = 3
+RETRY_DELAY = 2  # seconds
 
 AI_DECISIONS_FILE = "/data/ai_decisions.json"
 BYBIT_TICKERS_URL = "https://api.bybit.com/v5/market/tickers"
@@ -62,6 +64,20 @@ async def manage_cycle():
     async with httpx.AsyncClient() as c:
         try: await c.post(f"{URLS['pos']}/manage_active_positions", timeout=5)
         except: pass
+
+
+async def post_with_retries(client: httpx.AsyncClient, url: str, **kwargs):
+    """Simple retry helper to reduce transient connection errors."""
+    last_error = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            return await client.post(url, **kwargs)
+        except Exception as e:
+            last_error = e
+            print(f"        ⚠️ Tentativo {attempt}/{MAX_RETRIES} fallito verso {url}: {e}")
+            if attempt < MAX_RETRIES:
+                await asyncio.sleep(RETRY_DELAY)
+    raise last_error
 
 async def fetch_trending_symbols(client: httpx.AsyncClient) -> list:
     """Fetch trending symbols from Bybit using 24h turnover as a proxy."""
@@ -221,7 +237,8 @@ async def analysis_cycle():
         assets_data = {}
         for s in scan_list:
             try:
-                resp = await c.post(
+                resp = await post_with_retries(
+                    c,
                     f"{URLS['tech']}/analyze_multi_tf",
                     json={"symbol": s},
                     timeout=30,
@@ -257,10 +274,15 @@ async def analysis_cycle():
         # 5. AI DECISION
         print(f"        🤖 DeepSeek: Analizzando {list(assets_data.keys())}...")
         try:
-            resp = await c.post(f"{URLS['ai']}/decide_batch", json={
-                "global_data": {"portfolio": portfolio, "already_open": active_symbols},
-                "assets_data": assets_data
-            }, timeout=120)
+            resp = await post_with_retries(
+                c,
+                f"{URLS['ai']}/decide_batch",
+                json={
+                    "global_data": {"portfolio": portfolio, "already_open": active_symbols},
+                    "assets_data": assets_data
+                },
+                timeout=120
+            )
             
             dec_data = resp.json()
             analysis_text = dec_data.get('analysis', 'No text')
