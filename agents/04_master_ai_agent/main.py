@@ -253,12 +253,13 @@ LINEE GUIDA CHIAVE:
 - Se esistono posizioni aperte valuta la coerenza prima di aprire nuove operazioni.
 - Usa leva e size in base alla qualità del setup (non default fissi).
 - Usa RSI come conferma del setup, non come vincolo assoluto: in trend guarda i pullback (long 40–55, short 45–60), in range usa valori estremi (long <35, short >65).
-- Regole per regime: trend = trend-following; range = mean reversion con RSI + supporti/resistenze; transition = mercato che parte → size ridotta ma trade ammessi.
-- Aggiungi counter-trend scalp in trend bearish: RSI <25, prezzo distante ≥1.5 ATR da EMA20, prima candela di rifiuto, size 25–30%, TP corto.
-- Score minimi per tipo: trend ≥0.60, range ≥0.55, counter-trend ≥0.70 (size ridotta).
+- Regole per regime: trend = trend-following; range = mean reversion con RSI + supporti/resistenze; transition = mercato che parte → trade ammessi con size ridotta (≈50% della size normale), NON hold automatico.
+- Aggiungi counter-trend scalp in trend bearish: RSI <25, prezzo distante ≥1.5 ATR da EMA20, prima candela di rifiuto, size 25–30%, TP corto, vietato pyramiding.
+- Score minimi per tipo: trend ≥0.60, range ≥0.55, counter-trend ≥0.70 (size ridotta) — non usare soglia unica.
 - Logica LONG e SHORT separate: short in trend può partire con RSI 50–55, long in trend può partire con RSI 45–50. Non attendere sempre 30/70.
-- Pesa i segnali: trend TF alto 50%, momentum/MACD 30%, RSI 20%. Se trend domina consenti il trade; se momentum domina riduci size; HOLD solo con segnali tutti contrari.
+- Pesa i segnali con priorità esplicite: trend TF alto = driver (50%, priorità alta), momentum/MACD = conferma (30%, non veto), RSI = timing (20%). Se trend domina consenti il trade; se momentum domina riduci size ma non bloccare; HOLD solo con segnali tutti contrari.
 - Ogni HOLD deve spiegare rejected_by = (RSI | regime | score | momentum | risk_control) nel rationale per rendere l’azione chiara.
+- Gestione SL/TP per evitare chiusure premature: stop basato su ATR (usa atr_sl_factor rispetto all’ATR e oltre l’ultimo swing, non sotto il rumore), TP minimo 2R–3R coerente con atr_multiplier_tp; quando il prezzo raggiunge almeno 1R (breakeven_R) porta lo SL a breakeven e poi trail con trailing_atr_factor. Non chiudere anticipatamente senza un motivo contrario forte.
 
 FORMATO RISPOSTA JSON OBBLIGATORIO:
 {
