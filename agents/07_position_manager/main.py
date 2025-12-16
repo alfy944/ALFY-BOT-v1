@@ -521,17 +521,20 @@ def check_and_update_trailing_stops():
                     continue
 
             # Break-even: lock stop to entry when structure/EMA/volume confirm or 1R hit
+            in_profit = (side_dir == "long" and mark_price >= entry_price) or (
+                side_dir == "short" and mark_price <= entry_price
+            )
             be_conditions = []
-            if ema_50 > 0:
+            if in_profit and ema_50 > 0:
                 be_conditions.append((side_dir == "long" and mark_price > ema_50) or (side_dir == "short" and mark_price < ema_50))
-            if structure_break:
+            if in_profit and structure_break:
                 be_conditions.append(bool(structure_break.get(side_dir)))
-            if volume_spike:
+            if in_profit and volume_spike:
                 be_conditions.append((side_dir == "long" and mark_price > entry_price) or (side_dir == "short" and mark_price < entry_price))
             if risk_distance > 0:
                 be_conditions.append(profit_distance >= risk_distance)
 
-            if any(be_conditions):
+            if in_profit and any(be_conditions):
                 target_be = entry_price
                 if side_dir == "long":
                     if sl_current == 0.0 or target_be > sl_current:
