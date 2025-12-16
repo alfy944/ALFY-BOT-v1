@@ -38,6 +38,9 @@ DEFAULT_PARAMS = {
     "min_rsi_for_long": 40,
     "max_rsi_for_short": 60,
     "min_score_trade": 0.6,
+    "trend_score_threshold": 0.6,
+    "range_score_threshold": 0.55,
+    "countertrend_score_threshold": 0.7,
     "atr_sl_factor": 1.2,
     "trailing_atr_factor": 1.0,
     "breakeven_R": 1.0,
@@ -249,6 +252,13 @@ LINEE GUIDA CHIAVE:
 - Se i segnali sono deboli o misti -> scegli esplicitamente HOLD.
 - Se esistono posizioni aperte valuta la coerenza prima di aprire nuove operazioni.
 - Usa leva e size in base alla qualità del setup (non default fissi).
+- Usa RSI come conferma del setup, non come vincolo assoluto: in trend guarda i pullback (long 40–55, short 45–60), in range usa valori estremi (long <35, short >65).
+- Regole per regime: trend = trend-following; range = mean reversion con RSI + supporti/resistenze; transition = mercato che parte → size ridotta ma trade ammessi.
+- Aggiungi counter-trend scalp in trend bearish: RSI <25, prezzo distante ≥1.5 ATR da EMA20, prima candela di rifiuto, size 25–30%, TP corto.
+- Score minimi per tipo: trend ≥0.60, range ≥0.55, counter-trend ≥0.70 (size ridotta).
+- Logica LONG e SHORT separate: short in trend può partire con RSI 50–55, long in trend può partire con RSI 45–50. Non attendere sempre 30/70.
+- Pesa i segnali: trend TF alto 50%, momentum/MACD 30%, RSI 20%. Se trend domina consenti il trade; se momentum domina riduci size; HOLD solo con segnali tutti contrari.
+- Ogni HOLD deve spiegare rejected_by = (RSI | regime | score | momentum | risk_control) nel rationale per rendere l’azione chiara.
 
 FORMATO RISPOSTA JSON OBBLIGATORIO:
 {
@@ -309,7 +319,7 @@ PARAMETRI OTTIMIZZATI (dall'evoluzione automatica):
 - Soglia reverse: {params.get('reverse_threshold', 2.0)}%
 - Min RSI per long: {params.get('min_rsi_for_long', 40)}
 - Max RSI per short: {params.get('max_rsi_for_short', 60)}
-- Min score per aprire trade: {params.get('min_score_trade', 0.6)}
+- Score minimi: trend {params.get('trend_score_threshold', 0.6)} | range {params.get('range_score_threshold', 0.55)} | counter-trend {params.get('countertrend_score_threshold', 0.7)}
 - ATR SL factor: {params.get('atr_sl_factor', 1.2)} | trailing ATR: {params.get('trailing_atr_factor', 1.0)} | breakeven R: {params.get('breakeven_R', 1.0)}
 - Reverse abilitato: {params.get('reverse_enabled', True)} | Max daily trades: {params.get('max_daily_trades', 3)}
 
