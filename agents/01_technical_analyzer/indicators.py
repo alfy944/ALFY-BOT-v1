@@ -82,6 +82,15 @@ class CryptoTechnicalAnalysisBybit:
         prev2 = df.iloc[-3]
         pp = self.calculate_pivot_points(last["high"], last["low"], last["close"])
 
+        swing_high_raw = df["high"].iloc[-20:-1].max()
+        swing_low_raw = df["low"].iloc[-20:-1].min()
+        swing_high = float(swing_high_raw) if pd.notna(swing_high_raw) else None
+        swing_low = float(swing_low_raw) if pd.notna(swing_low_raw) else None
+
+        vol_window = df["volume"].rolling(window=20).mean()
+        avg_volume = vol_window.iloc[-2] if len(vol_window) >= 2 else last["volume"]
+        volume_spike = pd.notna(avg_volume) and last["volume"] > (avg_volume * 1.5)
+
         trend = "BULLISH" if last["close"] > last["ema_50"] else "BEARISH"
         macd_trend = "POSITIVE" if last["macd_line"] > last["macd_signal"] else "NEGATIVE"
 
@@ -119,6 +128,13 @@ class CryptoTechnicalAnalysisBybit:
             "macd_hist": round(last["macd_hist"], 6),
             "support": round(last["close"] - (2 * last["atr_14"]), 2),
             "resistance": round(last["close"] + (2 * last["atr_14"]), 2),
+            "structure_break": {
+                "long": bool(swing_high and last["close"] > swing_high),
+                "short": bool(swing_low and last["close"] < swing_low),
+                "swing_high": round(swing_high, 4) if swing_high else None,
+                "swing_low": round(swing_low, 4) if swing_low else None,
+            },
+            "volume_spike": bool(volume_spike),
             "momentum_exit": {
                 "long": bool(long_exit_votes >= 2),
                 "short": bool(short_exit_votes >= 2),
