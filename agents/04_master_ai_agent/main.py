@@ -46,6 +46,7 @@ DEFAULT_PARAMS = {
     "breakeven_R": 1.0,
     "reverse_enabled": True,
     "max_daily_trades": 3,
+    "max_open_positions": 3,
 }
 
 DEFAULT_CONTROLS = {
@@ -56,6 +57,7 @@ DEFAULT_CONTROLS = {
     "safe_mode": False,
     "max_trades_per_day": None,
     "size_cap": None,
+    "max_open_positions": None,
 }
 
 EVOLVED_PARAMS_FILE = "/data/evolved_params.json"
@@ -251,6 +253,7 @@ LINEE GUIDA CHIAVE:
 - Se i segnali tecnici sono chiari e coerenti con il trend -> apri la posizione (OPEN_LONG/OPEN_SHORT).
 - Se i segnali sono deboli o misti -> scegli esplicitamente HOLD.
 - Se esistono posizioni aperte valuta la coerenza prima di aprire nuove operazioni.
+- Non superare mai 3 posizioni aperte contemporaneamente: se ci sono già 3 trade aperti, apri solo se prima chiudi qualcosa o resta in HOLD.
 - Usa leva e size in base alla qualità del setup (non default fissi).
 - Usa RSI come conferma del setup, non come vincolo assoluto: in trend guarda i pullback (long 40–55, short 45–60), in range usa valori estremi (long <35, short >65).
 - Regole per regime: trend = trend-following; range = mean reversion con RSI + supporti/resistenze; transition = mercato che parte → trade ammessi con size ridotta (≈50% della size normale), NON hold automatico.
@@ -292,6 +295,7 @@ def decide_batch(payload: AnalysisPayload):
         logger.info(f"🤝 Using controls: {controls} (confidence={confidence})")
         
         # Semplificazione dati per prompt
+        active_positions = payload.global_data.get('already_open', []) or []
         assets_summary = {}
         for k, v in payload.assets_data.items():
             t = v.get('tech', {})
@@ -306,7 +310,7 @@ def decide_batch(payload: AnalysisPayload):
             
         prompt_data = {
             "wallet_equity": payload.global_data.get('portfolio', {}).get('equity'),
-            "active_positions": payload.global_data.get('already_open', []),
+            "active_positions": active_positions,
             "market_data": assets_summary
         }
         
@@ -323,7 +327,7 @@ PARAMETRI OTTIMIZZATI (dall'evoluzione automatica):
 - Max RSI per short: {params.get('max_rsi_for_short', 60)}
 - Score minimi: trend {params.get('trend_score_threshold', 0.6)} | range {params.get('range_score_threshold', 0.55)} | counter-trend {params.get('countertrend_score_threshold', 0.7)}
 - ATR SL factor: {params.get('atr_sl_factor', 1.2)} | trailing ATR: {params.get('trailing_atr_factor', 1.0)} | breakeven R: {params.get('breakeven_R', 1.0)}
-- Reverse abilitato: {params.get('reverse_enabled', True)} | Max daily trades: {params.get('max_daily_trades', 3)}
+- Reverse abilitato: {params.get('reverse_enabled', True)} | Max daily trades: {params.get('max_daily_trades', 3)} | Max posizioni aperte: {params.get('max_open_positions', 3)}
 
 CONTROLLI DI RISCHIO ATTIVI (da Learning Agent):
 - Disable symbols: {controls.get('disable_symbols')}
@@ -362,6 +366,8 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
         open_day_count = count_recent_actions(state.get('decisions', []), 24 * 60, action_filter=["OPEN_LONG", "OPEN_SHORT"])
         symbol_cooldowns = state.get('symbol_cooldowns', {}) or {}
         now_ts = datetime.utcnow().timestamp()
+        max_open_positions = controls.get('max_open_positions') if controls.get('max_open_positions') is not None else params.get('max_open_positions', 3)
+        open_positions_count = len(active_positions)
 
         valid_decisions = []
         for d in decision_json.get("decisions", []):
@@ -397,6 +403,9 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 if limit_day and open_day_count >= limit_day:
                     d['action'] = 'HOLD'
                     rationale_suffix.append('max trades/day reached')
+                if max_open_positions and open_positions_count >= max_open_positions:
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('max open positions reached')
 
             # Safe mode sizing
             if controls.get('safe_mode') and is_open_action(d.get('action', '')):
@@ -416,6 +425,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 if is_open_action(valid_dec.action):
                     open_hour_count += 1
                     open_day_count += 1
+                    open_positions_count += 1
                     symbol_cooldowns[symbol_key] = now_ts
 
                 valid_decisions.append(valid_dec)
