@@ -8,11 +8,13 @@ import plotly.graph_objects as go
 import plotly.express as px
 import time
 from datetime import datetime, timezone
+from html import escape
 from bybit_client import BybitClient
 from components.fees_tracker import render_fees_section, get_trading_fees
 from components.api_costs import render_api_costs_section, calculate_api_costs
 from components.ai_reasoning import render_ai_reasoning
 import numpy as np
+from utils.data_manager import get_closed_positions_history
 
 # --- COSTANTI ---
 DEFAULT_INITIAL_CAPITAL = 1000  # Capital iniziale di default per calcoli ROI
@@ -406,6 +408,64 @@ st.markdown("""
     
     .decision-reasoning p {
         margin: 8px 0;
+    }
+
+    /* Chiusure Log */
+    .closure-log-card {
+        background: linear-gradient(135deg, rgba(26,26,46,0.92) 0%, rgba(22,33,62,0.92) 100%);
+        border: 2px solid #00f3ff;
+        border-radius: 12px;
+        padding: 14px 16px;
+        margin-bottom: 12px;
+        box-shadow: 0 0 15px rgba(0,243,255,0.25);
+        transition: all 0.3s ease;
+    }
+
+    .closure-log-card:hover {
+        transform: translateY(-2px);
+        border-color: #bf00ff;
+        box-shadow: 0 8px 24px rgba(191,0,255,0.35);
+    }
+
+    .closure-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+    }
+
+    .closure-symbol {
+        font-family: 'Orbitron', monospace;
+        font-size: 16px;
+        color: #00f3ff;
+        font-weight: 800;
+    }
+
+    .closure-side {
+        font-family: 'Orbitron', monospace;
+        font-size: 14px;
+        letter-spacing: 1px;
+        padding: 4px 10px;
+        border-radius: 10px;
+        background: linear-gradient(135deg, rgba(0,255,157,0.2) 0%, rgba(0,243,255,0.15) 100%);
+        border: 1px solid rgba(0,243,255,0.4);
+        text-transform: uppercase;
+    }
+
+    .closure-time {
+        font-family: 'Rajdhani', sans-serif;
+        font-size: 13px;
+        color: #9aa0b0;
+    }
+
+    .closure-body {
+        font-family: 'Rajdhani', sans-serif;
+        color: #e0e0e0;
+        line-height: 1.6;
+    }
+
+    .closure-body strong {
+        color: #00ff9d;
     }
     
     .section-header {
@@ -1100,6 +1160,46 @@ with tab3:
         )
     else:
         st.markdown('<div class="info-box">ℹ️ Nessuno storico disponibile dal 9 dicembre 2025</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="section-title">📝 LOG MOTIVAZIONI CHIUSURA</div>', unsafe_allow_html=True)
+    closure_log = get_closed_positions_history()
+
+    if closure_log:
+        for trade in reversed(closure_log):
+            symbol = trade.get('symbol') or trade.get('Symbol', 'N/A')
+            side = trade.get('side') or trade.get('Side', 'N/A')
+            exit_time = trade.get('updated_time') or trade.get('Exit Time', 'N/A')
+            pnl_value = trade.get('closed_pnl') or trade.get('Closed PnL', 0)
+            reason = trade.get('close_reason') or trade.get('reason') or trade.get('closure_reason') or 'Motivo non disponibile'
+            trigger = trade.get('close_trigger') or trade.get('closed_by') or trade.get('close_type')
+
+            # Normalizza orari ISO o timestamp già formattati
+            if isinstance(exit_time, str):
+                formatted_time = exit_time.replace('T', ' ')[:19]
+            else:
+                formatted_time = str(exit_time)
+
+            safe_reason = escape(str(reason))
+            safe_trigger = escape(str(trigger)) if trigger else ''
+            safe_side = escape(str(side))
+            safe_symbol = escape(str(symbol))
+
+            st.markdown(f"""
+            <div class="closure-log-card">
+                <div class="closure-header">
+                    <span class="closure-symbol">{safe_symbol}</span>
+                    <span class="closure-side">{safe_side}</span>
+                    <span class="closure-time">{formatted_time}</span>
+                </div>
+                <div class="closure-body">
+                    <p><strong>Esito:</strong> ${pnl_value:+,.2f}</p>
+                    <p><strong>Motivo chiusura:</strong> {safe_reason}</p>
+                    {f'<p><strong>Trigger:</strong> {safe_trigger}</p>' if safe_trigger else ''}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="info-box">ℹ️ Nessun log di chiusura disponibile</div>', unsafe_allow_html=True)
 
 # --- AI DECISION LOG ---
 st.markdown("---")

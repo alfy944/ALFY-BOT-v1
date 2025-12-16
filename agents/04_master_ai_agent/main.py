@@ -38,11 +38,15 @@ DEFAULT_PARAMS = {
     "min_rsi_for_long": 40,
     "max_rsi_for_short": 60,
     "min_score_trade": 0.6,
+    "trend_score_threshold": 0.6,
+    "range_score_threshold": 0.55,
+    "countertrend_score_threshold": 0.7,
     "atr_sl_factor": 1.2,
     "trailing_atr_factor": 1.0,
     "breakeven_R": 1.0,
     "reverse_enabled": True,
     "max_daily_trades": 3,
+    "max_open_positions": 3,
 }
 
 DEFAULT_CONTROLS = {
@@ -53,6 +57,7 @@ DEFAULT_CONTROLS = {
     "safe_mode": False,
     "max_trades_per_day": None,
     "size_cap": None,
+    "max_open_positions": None,
 }
 
 EVOLVED_PARAMS_FILE = "/data/evolved_params.json"
@@ -248,7 +253,17 @@ LINEE GUIDA CHIAVE:
 - Se i segnali tecnici sono chiari e coerenti con il trend -> apri la posizione (OPEN_LONG/OPEN_SHORT).
 - Se i segnali sono deboli o misti -> scegli esplicitamente HOLD.
 - Se esistono posizioni aperte valuta la coerenza prima di aprire nuove operazioni.
+- Non superare mai 3 posizioni aperte contemporaneamente: se ci sono già 3 trade aperti, apri solo se prima chiudi qualcosa o resta in HOLD.
 - Usa leva e size in base alla qualità del setup (non default fissi).
+- Usa RSI come conferma del setup, non come vincolo assoluto: in trend guarda i pullback (long 40–55, short 45–60), in range usa valori estremi (long <35, short >65).
+- Regole per regime: trend = trend-following; range = mean reversion con RSI + supporti/resistenze; transition = mercato che parte → trade ammessi con size ridotta (≈50% della size normale), NON hold automatico.
+- Aggiungi counter-trend scalp in trend bearish: RSI <25, prezzo distante ≥1.5 ATR da EMA20, prima candela di rifiuto, size 25–30%, TP corto, vietato pyramiding.
+- Score minimi per tipo: trend ≥0.60, range ≥0.55, counter-trend ≥0.70 (size ridotta) — non usare soglia unica.
+- Logica LONG e SHORT separate: short in trend può partire con RSI 50–55, long in trend può partire con RSI 45–50. Non attendere sempre 30/70.
+- Pesa i segnali con priorità esplicite: trend TF alto = driver (50%, priorità alta), momentum/MACD = conferma (30%, non veto), RSI = timing (20%). Se trend domina consenti il trade; se momentum domina riduci size ma non bloccare; HOLD solo con segnali tutti contrari.
+- Ogni HOLD deve spiegare rejected_by = (RSI | regime | score | momentum | risk_control) nel rationale per rendere l’azione chiara.
+- Gestione SL/TP per evitare chiusure premature: stop basato su ATR (usa atr_sl_factor rispetto all’ATR e oltre l’ultimo swing, non sotto il rumore), TP minimo 2R–3R coerente con atr_multiplier_tp; quando il prezzo raggiunge almeno 1R (breakeven_R) porta lo SL a breakeven e poi trail con trailing_atr_factor. Non chiudere anticipatamente senza un motivo contrario forte.
+- No scalping: entra solo se il potenziale movimento offre spazio (≥1–1.5 ATR fino al primo target) e R/R atteso ≥2 al netto delle commissioni; evita TP ravvicinati o trade che coprono a malapena le fee. Non stringere gli stop in anticipo: porta a breakeven solo dopo 1R pieno, attiva il trailing oltre ~1.2–1.5R, e mantieni la posizione finché non scatta SL/TP o emergono segnali contrari forti.
 
 FORMATO RISPOSTA JSON OBBLIGATORIO:
 {
@@ -280,6 +295,7 @@ def decide_batch(payload: AnalysisPayload):
         logger.info(f"🤝 Using controls: {controls} (confidence={confidence})")
         
         # Semplificazione dati per prompt
+        active_positions = payload.global_data.get('already_open', []) or []
         assets_summary = {}
         for k, v in payload.assets_data.items():
             t = v.get('tech', {})
@@ -294,7 +310,7 @@ def decide_batch(payload: AnalysisPayload):
             
         prompt_data = {
             "wallet_equity": payload.global_data.get('portfolio', {}).get('equity'),
-            "active_positions": payload.global_data.get('already_open', []),
+            "active_positions": active_positions,
             "market_data": assets_summary
         }
         
@@ -309,9 +325,9 @@ PARAMETRI OTTIMIZZATI (dall'evoluzione automatica):
 - Soglia reverse: {params.get('reverse_threshold', 2.0)}%
 - Min RSI per long: {params.get('min_rsi_for_long', 40)}
 - Max RSI per short: {params.get('max_rsi_for_short', 60)}
-- Min score per aprire trade: {params.get('min_score_trade', 0.6)}
+- Score minimi: trend {params.get('trend_score_threshold', 0.6)} | range {params.get('range_score_threshold', 0.55)} | counter-trend {params.get('countertrend_score_threshold', 0.7)}
 - ATR SL factor: {params.get('atr_sl_factor', 1.2)} | trailing ATR: {params.get('trailing_atr_factor', 1.0)} | breakeven R: {params.get('breakeven_R', 1.0)}
-- Reverse abilitato: {params.get('reverse_enabled', True)} | Max daily trades: {params.get('max_daily_trades', 3)}
+- Reverse abilitato: {params.get('reverse_enabled', True)} | Max daily trades: {params.get('max_daily_trades', 3)} | Max posizioni aperte: {params.get('max_open_positions', 3)}
 
 CONTROLLI DI RISCHIO ATTIVI (da Learning Agent):
 - Disable symbols: {controls.get('disable_symbols')}
@@ -350,6 +366,8 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
         open_day_count = count_recent_actions(state.get('decisions', []), 24 * 60, action_filter=["OPEN_LONG", "OPEN_SHORT"])
         symbol_cooldowns = state.get('symbol_cooldowns', {}) or {}
         now_ts = datetime.utcnow().timestamp()
+        max_open_positions = controls.get('max_open_positions') if controls.get('max_open_positions') is not None else params.get('max_open_positions', 3)
+        open_positions_count = len(active_positions)
 
         valid_decisions = []
         for d in decision_json.get("decisions", []):
@@ -385,6 +403,9 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 if limit_day and open_day_count >= limit_day:
                     d['action'] = 'HOLD'
                     rationale_suffix.append('max trades/day reached')
+                if max_open_positions and open_positions_count >= max_open_positions:
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('max open positions reached')
 
             # Safe mode sizing
             if controls.get('safe_mode') and is_open_action(d.get('action', '')):
@@ -404,6 +425,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 if is_open_action(valid_dec.action):
                     open_hour_count += 1
                     open_day_count += 1
+                    open_positions_count += 1
                     symbol_cooldowns[symbol_key] = now_ts
 
                 valid_decisions.append(valid_dec)
