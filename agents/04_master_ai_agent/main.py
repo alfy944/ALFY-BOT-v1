@@ -38,6 +38,9 @@ DEFAULT_PARAMS = {
     "min_rsi_for_long": 40,
     "max_rsi_for_short": 60,
     "min_score_trade": 0.6,
+    "trend_score_threshold": 0.6,
+    "range_score_threshold": 0.55,
+    "countertrend_score_threshold": 0.7,
     "atr_sl_factor": 1.2,
     "trailing_atr_factor": 1.0,
     "breakeven_R": 1.0,
@@ -249,6 +252,14 @@ LINEE GUIDA CHIAVE:
 - Se i segnali sono deboli o misti -> scegli esplicitamente HOLD.
 - Se esistono posizioni aperte valuta la coerenza prima di aprire nuove operazioni.
 - Usa leva e size in base alla qualità del setup (non default fissi).
+- Usa RSI come conferma del setup, non come vincolo assoluto: in trend guarda i pullback (long 40–55, short 45–60), in range usa valori estremi (long <35, short >65).
+- Regole per regime: trend = trend-following; range = mean reversion con RSI + supporti/resistenze; transition = mercato che parte → trade ammessi con size ridotta (≈50% della size normale), NON hold automatico.
+- Aggiungi counter-trend scalp in trend bearish: RSI <25, prezzo distante ≥1.5 ATR da EMA20, prima candela di rifiuto, size 25–30%, TP corto, vietato pyramiding.
+- Score minimi per tipo: trend ≥0.60, range ≥0.55, counter-trend ≥0.70 (size ridotta) — non usare soglia unica.
+- Logica LONG e SHORT separate: short in trend può partire con RSI 50–55, long in trend può partire con RSI 45–50. Non attendere sempre 30/70.
+- Pesa i segnali con priorità esplicite: trend TF alto = driver (50%, priorità alta), momentum/MACD = conferma (30%, non veto), RSI = timing (20%). Se trend domina consenti il trade; se momentum domina riduci size ma non bloccare; HOLD solo con segnali tutti contrari.
+- Ogni HOLD deve spiegare rejected_by = (RSI | regime | score | momentum | risk_control) nel rationale per rendere l’azione chiara.
+- Gestione SL/TP per evitare chiusure premature: stop basato su ATR (usa atr_sl_factor rispetto all’ATR e oltre l’ultimo swing, non sotto il rumore), TP minimo 2R–3R coerente con atr_multiplier_tp; quando il prezzo raggiunge almeno 1R (breakeven_R) porta lo SL a breakeven e poi trail con trailing_atr_factor. Non chiudere anticipatamente senza un motivo contrario forte.
 
 FORMATO RISPOSTA JSON OBBLIGATORIO:
 {
@@ -309,7 +320,7 @@ PARAMETRI OTTIMIZZATI (dall'evoluzione automatica):
 - Soglia reverse: {params.get('reverse_threshold', 2.0)}%
 - Min RSI per long: {params.get('min_rsi_for_long', 40)}
 - Max RSI per short: {params.get('max_rsi_for_short', 60)}
-- Min score per aprire trade: {params.get('min_score_trade', 0.6)}
+- Score minimi: trend {params.get('trend_score_threshold', 0.6)} | range {params.get('range_score_threshold', 0.55)} | counter-trend {params.get('countertrend_score_threshold', 0.7)}
 - ATR SL factor: {params.get('atr_sl_factor', 1.2)} | trailing ATR: {params.get('trailing_atr_factor', 1.0)} | breakeven R: {params.get('breakeven_R', 1.0)}
 - Reverse abilitato: {params.get('reverse_enabled', True)} | Max daily trades: {params.get('max_daily_trades', 3)}
 
