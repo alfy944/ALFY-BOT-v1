@@ -25,6 +25,12 @@ docker-compose up -d
 docker-compose logs -f orchestrator
 ```
 
+### Universe delle crypto considerate
+- Scansione primaria sugli **strumenti trending di Bybit (categoria linear)** ordinati per turnover 24h, limitati da `TRENDING_SYMBOLS_LIMIT` (default 6) e filtrati ai pair in **USDT**.
+- Per impostazione predefinita vengono considerati **solo i nuovi listing**: l'orchestrator filtra i trending usando il `launch/listTime` di Bybit e accetta solo i token listati negli ultimi `NEW_SYMBOL_MAX_DAYS` (default 30). Puoi disabilitare questo filtro impostando `ONLY_NEW_SYMBOLS=false` nel `.env`.
+- Se il fetch trending è disabilitato (`USE_TRENDING_SYMBOLS=false`) o fallisce, usa la lista di fallback: **BTCUSDT, ETHUSDT, SOLUSDT**.
+- Gli asset con posizioni già aperte vengono esclusi dalla scansione per evitare aperture duplicate sullo stesso simbolo.
+
 ## 🖥️ Guida completa: configurazione e avvio su VPS Linux
 
 1) **Prerequisiti minimi**
@@ -81,7 +87,7 @@ docker-compose logs -f orchestrator
 
 ## 🧭 Come funziona ora l'orchestrator
 
-- **Universo simboli dinamico**: per default il ciclo di scansione usa i perpetual USDT di Bybit con il turnover a 24h più alto (endpoint `v5/market/tickers`, categoria `linear`). Il limite è regolabile con `TRENDING_SYMBOLS_LIMIT` (default `6`). Se `USE_TRENDING_SYMBOLS=false` o la chiamata fallisce, rientra sui tre simboli storici `BTCUSDT`, `ETHUSDT`, `SOLUSDT`.
+- **Universo simboli dinamico**: per default il ciclo di scansione usa i perpetual USDT di Bybit con il turnover a 24h più alto (endpoint `v5/market/tickers`, categoria `linear`). Il limite è regolabile con `TRENDING_SYMBOLS_LIMIT` (default `6`). È attivo di default il filtro **ONLY_NEW_SYMBOLS**: i trending vengono incrociati con l'endpoint `v5/market/instruments-info` e vengono mantenuti solo i token listati negli ultimi `NEW_SYMBOL_MAX_DAYS` (default `30`). Se `USE_TRENDING_SYMBOLS=false` o la chiamata fallisce, rientra sui tre simboli storici `BTCUSDT`, `ETHUSDT`, `SOLUSDT`.
 - **Gestione posizioni**: a ogni ciclo (default 60s) interroga il Position Manager per saldo e posizioni aperte, effettua un check di perdite critiche (`REVERSE_THRESHOLD`) e salva un riepilogo su `/data/ai_decisions.json` per la dashboard.
 - **Pipeline decisionale**: se c'è almeno uno slot libero (`MAX_POSITIONS=3`), filtra i simboli senza posizione aperta, chiama l'analisi tecnica multi-timeframe per ciascuno e passa i risultati al Master AI (`/decide_batch`). Gli ordini di apertura long/short approvati vengono inviati al Position Manager con leva e size percentuale suggerite.
 
