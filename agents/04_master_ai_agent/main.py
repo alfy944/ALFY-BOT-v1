@@ -419,11 +419,13 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
 
             # Breakout requirement
             breakout = tech.get("breakout") or {}
+            breakout_long = breakout.get("long")
+            breakout_short = breakout.get("short")
             if is_open_action(d.get('action', '')):
-                if d.get('action') == "OPEN_LONG" and not breakout.get("long", False):
+                if d.get('action') == "OPEN_LONG" and breakout_long is not None and not breakout_long:
                     d['action'] = 'HOLD'
                     rationale_suffix.append('no_breakout_long')
-                if d.get('action') == "OPEN_SHORT" and not breakout.get("short", False):
+                if d.get('action') == "OPEN_SHORT" and breakout_short is not None and not breakout_short:
                     d['action'] = 'HOLD'
                     rationale_suffix.append('no_breakout_short')
 
@@ -457,9 +459,9 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             conditions_true = 0
             if trend_15m and trend_1h and trend_15m == trend_1h:
                 conditions_true += 1
-            if breakout.get("long") and d.get('action') == "OPEN_LONG":
+            if breakout_long and breakout_long is True and d.get('action') == "OPEN_LONG":
                 conditions_true += 1
-            if breakout.get("short") and d.get('action') == "OPEN_SHORT":
+            if breakout_short and breakout_short is True and d.get('action') == "OPEN_SHORT":
                 conditions_true += 1
             if vol_ratio is not None and vol_ratio >= 1.3:
                 conditions_true += 1
