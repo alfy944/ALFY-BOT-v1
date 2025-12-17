@@ -295,6 +295,7 @@ async def analysis_cycle():
                 return
 
             # 6. EXECUTION
+            remaining_slots = max(0, MAX_POSITIONS - len(active_symbols))
             for d in decisions_list:
                 sym = d['symbol']
                 action = d['action']
@@ -304,6 +305,10 @@ async def analysis_cycle():
                     continue
 
                 if action in ["OPEN_LONG", "OPEN_SHORT"]:
+                    if remaining_slots <= 0:
+                        print(f"        ⏳ Skip {action} su {sym}: raggiunto limite {MAX_POSITIONS} posizioni aperte")
+                        continue
+
                     print(f"        🔥 EXECUTING {action} on {sym}...")
                     res = await c.post(f"{URLS['pos']}/open_position", json={
                         "symbol": sym,
@@ -313,6 +318,7 @@ async def analysis_cycle():
                         "score": d.get('score')
                     })
                     print(f"        ✅ Result: {res.json()}")
+                    remaining_slots -= 1
 
         except Exception as e: 
             print(f"        ❌ AI/Exec Error: {e}")

@@ -1144,16 +1144,20 @@ with tab3:
         # Rimuovi colonne non necessarie per la visualizzazione
         display_cols = ['Symbol', 'Side', 'Closed PnL', 'Exit Time']
         
-        df_display = df_hist[[col for col in display_cols if col in df_hist.columns or col == 'Fee']]
-        
-        st.dataframe(
-            df_display,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Closed PnL": st.column_config.NumberColumn(format="$%.2f"),
-            }
-        )
+        available_cols = [col for col in display_cols if col in df_hist.columns]
+        if not available_cols:
+            st.markdown('<div class="info-box">ℹ️ Nessun dato disponibile per lo storico.</div>', unsafe_allow_html=True)
+        else:
+            df_display = df_hist[available_cols]
+
+            st.dataframe(
+                df_display,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Closed PnL": st.column_config.NumberColumn(format="$%.2f"),
+                }
+            )
     else:
         st.markdown('<div class="info-box">ℹ️ Nessuno storico disponibile dal 9 dicembre 2025</div>', unsafe_allow_html=True)
 
