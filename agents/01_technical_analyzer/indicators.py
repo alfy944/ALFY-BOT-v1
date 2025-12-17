@@ -139,6 +139,8 @@ class CryptoTechnicalAnalysisBybit:
         macd_hist_rising = (last["macd_hist"] > prev["macd_hist"]) and (prev["macd_hist"] > prev2["macd_hist"])
         close_below_ema20 = last["close"] < last["ema_20"]
         close_above_ema20 = last["close"] > last["ema_20"]
+        high_20 = df["high"].iloc[-20:].max()
+        low_20 = df["low"].iloc[-20:].min()
 
         long_exit_votes = sum([bool(rsi_below_50), bool(macd_hist_falling), bool(close_below_ema20)])
         short_exit_votes = sum([bool(rsi_above_50), bool(macd_hist_rising), bool(close_above_ema20)])
@@ -167,6 +169,8 @@ class CryptoTechnicalAnalysisBybit:
                 "long": bool(breakout_long),
                 "short": bool(breakout_short),
             },
+            "high_20": round(high_20, 4) if pd.notna(high_20) else None,
+            "low_20": round(low_20, 4) if pd.notna(low_20) else None,
             "structure_break": {
                 "long": bool(swing_high and last["close"] > swing_high),
                 "short": bool(swing_low and last["close"] < swing_low),

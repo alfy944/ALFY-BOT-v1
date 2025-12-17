@@ -519,6 +519,8 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             breakout = tech.get("breakout") or {}
             breakout_long = breakout.get("long")
             breakout_short = breakout.get("short")
+            high_20 = tech.get("high_20")
+            low_20 = tech.get("low_20")
             if is_open_action(d.get('action', '')):
                 if d.get('action') == "OPEN_LONG" and breakout_long is not None and not breakout_long:
                     d['action'] = 'HOLD'
@@ -533,13 +535,42 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 is_open_action(d.get('action', ''))
                 and regime_val == "transition"
             ):
-                if not (
-                    (score_val or 0) >= 0.75
+                allow_transition = False
+                if (
+                    trend_15m == "BULLISH"
+                    and trend_1h == "BULLISH"
+                    and breakout_long
                     and vol_ratio is not None
-                    and vol_ratio >= 1.3
-                    and (
-                        (d.get('action') == "OPEN_LONG" and breakout_long)
-                        or (d.get('action') == "OPEN_SHORT" and breakout_short)
+                    and vol_ratio >= 1.5
+                    and high_20 is not None
+                    and price is not None
+                    and price > high_20
+                    and (score_val or 0) >= 0.60
+                ):
+                    allow_transition = True
+                if (
+                    trend_15m == "BEARISH"
+                    and trend_1h == "BEARISH"
+                    and breakout_short
+                    and vol_ratio is not None
+                    and vol_ratio >= 1.5
+                    and low_20 is not None
+                    and price is not None
+                    and price < low_20
+                    and (score_val or 0) >= 0.60
+                ):
+                    allow_transition = True
+
+                if not (
+                    allow_transition
+                    or (
+                        (score_val or 0) >= 0.75
+                        and vol_ratio is not None
+                        and vol_ratio >= 1.3
+                        and (
+                            (d.get('action') == "OPEN_LONG" and breakout_long)
+                            or (d.get('action') == "OPEN_SHORT" and breakout_short)
+                        )
                     )
                 ):
                     d['action'] = 'HOLD'
