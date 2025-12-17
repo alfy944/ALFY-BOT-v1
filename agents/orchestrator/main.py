@@ -18,7 +18,7 @@ RETRY_DELAY = 2  # seconds
 AI_DECISIONS_FILE = "/data/ai_decisions.json"
 BYBIT_TICKERS_URL = "https://api.bybit.com/v5/market/tickers"
 USE_TRENDING = os.getenv("USE_TRENDING_SYMBOLS", "true").lower() == "true"
-TRENDING_LIMIT = int(os.getenv("TRENDING_SYMBOLS_LIMIT", "6"))
+TRENDING_LIMIT = int(os.getenv("TRENDING_SYMBOLS_LIMIT", "10"))
 
 def save_monitoring_decision(positions_count: int, max_positions: int, positions_details: list, reason: str):
     """Salva la decisione di monitoraggio per la dashboard"""
@@ -309,7 +309,8 @@ async def analysis_cycle():
                         "symbol": sym,
                         "side": action,
                         "leverage": d.get('leverage', 5),
-                        "size_pct": d.get('size_pct', 0.15)
+                        "size_pct": d.get('size_pct', 0.15),
+                        "score": d.get('score')
                     })
                     print(f"        ✅ Result: {res.json()}")
 
