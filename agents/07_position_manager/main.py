@@ -39,6 +39,14 @@ ATR_MULTIPLIERS = {
 TECHNICAL_ANALYZER_URL = os.getenv("TECHNICAL_ANALYZER_URL", "http://01_technical_analyzer:8000").strip()
 FALLBACK_TRAILING_PCT = float(os.getenv("FALLBACK_TRAILING_PCT", "0.025"))  # 2.5%
 DEFAULT_INITIAL_SL_PCT = float(os.getenv("DEFAULT_INITIAL_SL_PCT", "0.04"))  # 4%
+# --- BREAK-EVEN BUFFER ---
+BE_MIN_R = float(os.getenv("BE_MIN_R", "0.1"))  # require at least 0.1R before BE triggers
+BE_FEE_BUFFER_PCT = float(os.getenv("BE_FEE_BUFFER_PCT", "0.0008"))  # offset BE to cover taker+slippage
+# --- TIME-BASED EXIT ---
+TIME_EXIT_BARS = int(os.getenv("TIME_EXIT_BARS", "14"))
+TIME_EXIT_INTERVAL_MIN = int(os.getenv("TIME_EXIT_INTERVAL_MIN", "15"))
+TIME_EXIT_MIN_PROFIT_R = float(os.getenv("TIME_EXIT_MIN_PROFIT_R", "0.4"))
+TIME_EXIT_ATR_DROP_PCT = float(os.getenv("TIME_EXIT_ATR_DROP_PCT", "0.1"))
 
 # --- PARAMETRI AI REVIEW / REVERSE ---
 ENABLE_AI_REVIEW = os.getenv("ENABLE_AI_REVIEW", "true").lower() == "true"
@@ -364,10 +372,25 @@ def get_market_risk_data(symbol: str) -> Dict[str, Any]:
                     "macd_hist": to_float(d.get("macd_hist"), None),
                     "rsi": to_float(d.get("rsi"), None),
                     "ema_20": to_float((d.get("details", {}) or {}).get("ema_20"), None),
+                    "ema_50": to_float((d.get("details", {}) or {}).get("ema_50"), None),
+                    "structure_break": d.get("structure_break") or {},
+                    "volume_spike": bool(d.get("volume_spike")),
+                    "swing_high": to_float((d.get("structure_break") or {}).get("swing_high"), None),
+                    "swing_low": to_float((d.get("structure_break") or {}).get("swing_low"), None),
+                    "support": to_float(d.get("support"), None),
+                    "resistance": to_float(d.get("resistance"), None),
                 }
     except Exception:
         pass
-    return {"atr": None, "price": None, "momentum_exit": {}, "regime": None, "volatility": None}
+    return {
+        "atr": None,
+        "price": None,
+        "momentum_exit": {},
+        "regime": None,
+        "volatility": None,
+        "ema_50": None,
+        "structure_break": {},
+    }
 
 def get_trailing_distance_pct(symbol: str, mark_price: float) -> float:
     data = get_market_risk_data(symbol)
@@ -431,12 +454,13 @@ def check_and_update_trailing_stops():
             atr = risk_data.get("atr")
             momentum_exit = risk_data.get("momentum_exit") or {}
             ema_20 = to_float(risk_data.get("ema_20"), 0.0)
-
-            # Momentum-based soft exit (2/3 conditions)
-            if momentum_exit.get(side_dir):
-                print(f"⏱️ Momentum exit triggered for {symbol} ({side_dir}) - closing position")
-                execute_close_position(symbol)
-                continue
+            ema_50 = to_float(risk_data.get("ema_50"), 0.0)
+            structure_break = risk_data.get("structure_break") or {}
+            volume_spike = bool(risk_data.get("volume_spike"))
+            swing_low = to_float(risk_data.get("swing_low"), None)
+            swing_high = to_float(risk_data.get("swing_high"), None)
+            support_level = to_float(risk_data.get("support"), None)
+            resistance_level = to_float(risk_data.get("resistance"), None)
 
             # Track initial SL distance per symbol for 1R calculations
             meta = position_risk_meta.get(sym_id, {})
@@ -451,6 +475,7 @@ def check_and_update_trailing_stops():
                 position_risk_meta[sym_id] = {
                     "entry_price": entry_price,
                     "initial_sl": base_sl,
+                    "initial_atr_pct": (atr / entry_price) if atr and entry_price else None,
                 }
                 initial_sl_price = base_sl
 
@@ -461,43 +486,102 @@ def check_and_update_trailing_stops():
             if initial_sl_price and entry_price:
                 risk_distance = (entry_price - initial_sl_price) if side_dir == "long" else (initial_sl_price - entry_price)
 
-            # Break-even: lock stop to entry after 1R
             new_sl_price = None
+            profit_distance = (mark_price - entry_price) if side_dir == "long" else (entry_price - mark_price)
+            effective_fee_buffer_pct = BE_FEE_BUFFER_PCT / max(1.0, leverage)
+            fee_buffer_abs = entry_price * effective_fee_buffer_pct
+            r_multiple = profit_distance / risk_distance if risk_distance > 0 else 0.0
+            sl_at_be = (side_dir == "long" and sl_current >= entry_price) or (side_dir == "short" and sl_current <= entry_price)
+
+            momentum_allowed = False
             if risk_distance > 0:
-                profit_distance = (mark_price - entry_price) if side_dir == "long" else (entry_price - mark_price)
-                if profit_distance >= risk_distance:
-                    target_be = entry_price
-                    if side_dir == "long":
-                        if sl_current == 0.0 or target_be > sl_current:
-                            new_sl_price = target_be
-                    else:
-                        if sl_current == 0.0 or target_be < sl_current:
-                            new_sl_price = target_be
-                    position_risk_meta[sym_id]["breakeven_reached"] = True
+                momentum_allowed = (r_multiple >= 0.5) or sl_at_be or position_risk_meta.get(sym_id, {}).get("breakeven_reached")
 
-            # Trailing ATR after break-even
-            if (position_risk_meta.get(sym_id, {}).get("breakeven_reached") or sl_current == entry_price) and atr:
-                trailing_target = mark_price - (atr * 1.0) if side_dir == "long" else mark_price + (atr * 1.0)
+            # Momentum-based soft exit (2/3 conditions) only if protected/at TP0
+            if momentum_exit.get(side_dir) and momentum_allowed:
+                print(f"⏱️ Momentum exit triggered for {symbol} ({side_dir}) - closing position")
+                execute_close_position(symbol)
+                continue
+
+            # Time-based exit for stuck trades
+            opened_at = position_risk_meta.get(sym_id, {}).get("opened_at")
+            initial_atr_pct = position_risk_meta.get(sym_id, {}).get("initial_atr_pct")
+            current_atr_pct = (atr / mark_price) if atr and mark_price else None
+            atr_dropping = False
+            if initial_atr_pct and current_atr_pct is not None:
+                atr_dropping = current_atr_pct < initial_atr_pct * (1 - TIME_EXIT_ATR_DROP_PCT)
+
+            if opened_at and risk_distance > 0 and current_atr_pct is not None:
+                elapsed_bars = (time.time() - opened_at) / (TIME_EXIT_INTERVAL_MIN * 60)
+                if (
+                    elapsed_bars >= TIME_EXIT_BARS
+                    and r_multiple < TIME_EXIT_MIN_PROFIT_R
+                    and atr_dropping
+                ):
+                    print(
+                        f"⏱️ Time-based exit {symbol}: bars={elapsed_bars:.1f}, r={r_multiple:.2f}, "
+                        f"ATR% {current_atr_pct:.4f} (< {initial_atr_pct:.4f})"
+                    )
+                    execute_close_position(symbol)
+                    continue
+
+            # Break-even: lock stop to entry when structure/EMA/volume confirm or 1R hit
+            in_profit = (side_dir == "long" and mark_price >= entry_price) or (
+                side_dir == "short" and mark_price <= entry_price
+            )
+            be_conditions = []
+            min_profit_for_be = max(risk_distance * BE_MIN_R if risk_distance > 0 else 0.0, fee_buffer_abs)
+            profitable_enough = (risk_distance > 0) and (profit_distance >= min_profit_for_be)
+            if in_profit and profitable_enough and ema_50 > 0:
+                be_conditions.append((side_dir == "long" and mark_price > ema_50) or (side_dir == "short" and mark_price < ema_50))
+            if in_profit and profitable_enough and structure_break:
+                be_conditions.append(bool(structure_break.get(side_dir)))
+            if in_profit and profitable_enough and volume_spike:
+                be_conditions.append((side_dir == "long" and mark_price > entry_price) or (side_dir == "short" and mark_price < entry_price))
+            if risk_distance > 0 and in_profit:
+                be_conditions.append(profit_distance >= risk_distance)
+
+            if in_profit and any(be_conditions):
+                target_be = entry_price + fee_buffer_abs if side_dir == "long" else entry_price - fee_buffer_abs
                 if side_dir == "long":
-                    if sl_current == 0.0 or trailing_target > sl_current:
-                        new_sl_price = max(new_sl_price or 0, trailing_target)
+                    if sl_current == 0.0 or target_be > sl_current:
+                        new_sl_price = target_be
                 else:
-                    if sl_current == 0.0 or trailing_target < sl_current:
-                        new_sl_price = trailing_target if new_sl_price is None else min(new_sl_price, trailing_target)
+                    if sl_current == 0.0 or target_be < sl_current:
+                        new_sl_price = target_be
+                position_risk_meta[sym_id]["breakeven_reached"] = True
+                sl_at_be = True
 
-                # Structure-aware trailing using EMA20 as dynamic support/resistance
+            # Trailing ATR + structure after break-even
+            if (position_risk_meta.get(sym_id, {}).get("breakeven_reached") or sl_at_be) and (atr or swing_low or swing_high or ema_20):
+                trailing_candidates = []
+                if atr:
+                    trailing_candidates.append(mark_price - (atr * 1.0) if side_dir == "long" else mark_price + (atr * 1.0))
+
+                structure_level = swing_low if side_dir == "long" else swing_high
+                if not structure_level:
+                    structure_level = support_level if side_dir == "long" else resistance_level
+                if structure_level:
+                    trailing_candidates.append(structure_level)
+
                 if ema_20 > 0 and atr:
-                    if side_dir == "long":
-                        structure_sl = ema_20 - (atr * 0.2)
-                        if sl_current == 0.0 or structure_sl > sl_current:
-                            new_sl_price = max(new_sl_price or 0, structure_sl)
-                    else:
-                        structure_sl = ema_20 + (atr * 0.2)
-                        if sl_current == 0.0 or structure_sl < sl_current:
-                            new_sl_price = structure_sl if new_sl_price is None else min(new_sl_price, structure_sl)
+                    structure_sl = ema_20 - (atr * 0.2) if side_dir == "long" else ema_20 + (atr * 0.2)
+                    trailing_candidates.append(structure_sl)
+
+                if trailing_candidates:
+                    valid_candidates = [c for c in trailing_candidates if c]
+                    if valid_candidates:
+                        if side_dir == "long":
+                            candidate_sl = max(valid_candidates)
+                            if candidate_sl and (sl_current == 0.0 or candidate_sl > sl_current):
+                                new_sl_price = max(new_sl_price or 0, candidate_sl)
+                        else:
+                            candidate_sl = min(valid_candidates)
+                            if candidate_sl and (sl_current == 0.0 or candidate_sl < sl_current):
+                                new_sl_price = candidate_sl if new_sl_price is None else min(new_sl_price, candidate_sl)
 
             # Fallback trailing distance if ATR unavailable but break-even reached
-            if new_sl_price is None and (position_risk_meta.get(sym_id, {}).get("breakeven_reached") or sl_current == entry_price):
+            if new_sl_price is None and (position_risk_meta.get(sym_id, {}).get("breakeven_reached") or sl_at_be):
                 trailing_distance = get_trailing_distance_pct(symbol, mark_price)
                 if side_dir == "long":
                     target_sl = mark_price * (1 - trailing_distance)
@@ -1195,6 +1279,12 @@ def open_position(order: OrderRequest):
             initial_risk_pct = abs(price - sl_price) / price * float(order.leverage) * 100
         except Exception:
             pass
+        initial_atr_pct = None
+        try:
+            if atr_value and price:
+                initial_atr_pct = atr_value / price
+        except Exception:
+            pass
         position_risk_meta[sym_id] = {
             "entry_price": price,
             "initial_sl": sl_price,
@@ -1202,6 +1292,7 @@ def open_position(order: OrderRequest):
             "size_pct": float(order.size_pct),
             "leverage": float(order.leverage),
             "market_conditions": {**(risk_data or {}), "initial_risk_pct": round(initial_risk_pct, 4)},
+            "initial_atr_pct": initial_atr_pct,
             "opened_at": time.time(),
         }
         return {"status": "executed", "id": res.get("id")}
