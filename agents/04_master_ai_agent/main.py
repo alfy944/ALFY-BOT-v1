@@ -36,15 +36,15 @@ DEFAULT_PARAMS = {
     "atr_multiplier_sl": 2.0,
     "atr_multiplier_tp": 3.0,
     "min_rsi_for_long": 40,
-    "max_rsi_for_short": 60,
-    "min_score_trade": 0.6,
-    "trend_score_threshold": 0.6,
+    "max_rsi_for_short": 50,
+    "min_score_trade": 0.56,
+    "trend_score_threshold": 0.56,
     "range_score_threshold": 0.55,
     "countertrend_score_threshold": 0.7,
     "atr_sl_factor": 1.2,
     "trailing_atr_factor": 1.0,
     "breakeven_R": 1.0,
-    "reverse_enabled": True,
+    "reverse_enabled": False,
     "max_daily_trades": 3,
     "max_open_positions": 3,
 }
@@ -64,6 +64,7 @@ EVOLVED_PARAMS_FILE = "/data/evolved_params.json"
 API_COSTS_FILE = "/data/api_costs.json"
 AI_DECISIONS_FILE = "/data/ai_decisions.json"
 MASTER_STATE_FILE = "/data/master_state.json"
+MIN_SYMBOL_COOLDOWN_MINUTES = 45
 
 
 def log_api_call(tokens_in: int, tokens_out: int):
@@ -164,6 +165,8 @@ class Decision(BaseModel):
     action: Literal["OPEN_LONG", "OPEN_SHORT", "HOLD", "CLOSE"]
     leverage: float = 1.0
     size_pct: float = 0.0
+    score: Optional[float] = None
+    hold_quality: Optional[Literal["strong", "weak"]] = None
     rationale: str
 
     # Validator permissivi
@@ -176,11 +179,83 @@ class Decision(BaseModel):
             values.size_pct = 0.0
         else:
             values.size_pct = max(0.05, min(values.size_pct, 0.25))
+        if values.action == "HOLD" and values.hold_quality not in ("strong", "weak"):
+            values.hold_quality = "strong"
         return values
 
 
 def is_open_action(action: str) -> bool:
     return action in ("OPEN_LONG", "OPEN_SHORT")
+
+
+def weighted_score(action: str, tech: dict) -> Optional[float]:
+    """
+    Calcola uno score pesato (trend 50%, momentum 30%, RSI 20%)
+    per evitare medie secche che penalizzano trend chiari con momentum neutro.
+    """
+    try:
+        trend_score = 0.5
+        momentum_score = 0.5
+        rsi_score = 0.5
+
+        trend_15m = (tech.get("trend_15m") or tech.get("trend") or "").upper()
+        trend_1h = (tech.get("trend_1h") or "").upper()
+        action_is_long = action == "OPEN_LONG"
+
+        if trend_15m and trend_1h:
+            same = trend_15m == trend_1h
+            if action_is_long and trend_15m == "BULLISH" and same:
+                trend_score = 1.0
+            elif (not action_is_long) and trend_15m == "BEARISH" and same:
+                trend_score = 1.0
+            elif (action_is_long and trend_15m == "BULLISH") or ((not action_is_long) and trend_15m == "BEARISH"):
+                trend_score = 0.7
+            else:
+                trend_score = 0.4
+
+        macd_hist = tech.get("macd_hist")
+        atr_val = tech.get("atr") or 0
+        if macd_hist is not None:
+            # momentum è neutro salvo forte opposizione (>0.25*ATR)
+            if action_is_long:
+                if macd_hist > 0:
+                    momentum_score = 0.7
+                elif macd_hist < -0.25 * atr_val:
+                    momentum_score = 0.3
+                else:
+                    momentum_score = 0.5
+            else:
+                if macd_hist < 0:
+                    momentum_score = 0.7
+                elif macd_hist > 0.25 * atr_val:
+                    momentum_score = 0.3
+                else:
+                    momentum_score = 0.5
+
+        rsi_val = tech.get("rsi") or tech.get("rsi_7")
+        if rsi_val is not None:
+            if action_is_long:
+                if 45 <= rsi_val <= 60:
+                    rsi_score = 1.0
+                elif 40 <= rsi_val <= 70:
+                    rsi_score = 0.7
+                else:
+                    rsi_score = 0.4
+            else:
+                if 55 <= rsi_val <= 70:
+                    rsi_score = 1.0
+                elif 50 <= rsi_val <= 75:
+                    rsi_score = 0.7
+                else:
+                    rsi_score = 0.4
+
+        return round(0.5 * trend_score + 0.3 * momentum_score + 0.2 * rsi_score, 4)
+    except Exception:
+        return None
+
+
+def clamp(val: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, val))
 
 
 def count_recent_actions(decisions: list, minutes: int, action_filter=None) -> int:
@@ -274,6 +349,7 @@ FORMATO RISPOSTA JSON OBBLIGATORIO:
       "action": "OPEN_LONG" | "OPEN_SHORT" | "HOLD" | "CLOSE",
       "leverage": 5.0,
       "size_pct": 0.15,
+      "score": 0.82,
       "rationale": "RSI basso su supporto"
     }
   ]
@@ -299,13 +375,24 @@ def decide_batch(payload: AnalysisPayload):
         assets_summary = {}
         for k, v in payload.assets_data.items():
             t = v.get('tech', {})
+            if k.upper() != "BTC" and t.get("regime") == "range":
+                logger.info(f"⏳ Skip {k} per regime range")
+                continue
             assets_summary[k] = {
                 "price": t.get('price'),
                 "rsi_7": t.get('details', {}).get('rsi_7') or t.get('rsi_7'),
                 "trend": t.get('trend'),
+                "trend_15m": t.get('trend_15m') or t.get('trend'),
+                "trend_1h": t.get('trend_1h'),
                 "regime": t.get('regime'),
+                "macd": t.get('macd'),
                 "macd_hist": t.get('macd_hist'),
-                "macd": t.get('macd')
+                "ema_20": (t.get('details') or {}).get('ema_20'),
+                "atr": (t.get('details') or {}).get('atr'),
+                "breakout": t.get('breakout') or {},
+                "volume_ratio": (t.get('details') or {}).get('volume_ratio'),
+                "volume_avg_20": (t.get('details') or {}).get('volume_avg_20'),
+                "rsi": t.get('rsi'),
             }
             
         prompt_data = {
@@ -324,8 +411,8 @@ PARAMETRI OTTIMIZZATI (dall'evoluzione automatica):
 - Size per trade: {params.get('size_pct', 0.15)*100:.0f}% del wallet
 - Soglia reverse: {params.get('reverse_threshold', 2.0)}%
 - Min RSI per long: {params.get('min_rsi_for_long', 40)}
-- Max RSI per short: {params.get('max_rsi_for_short', 60)}
-- Score minimi: trend {params.get('trend_score_threshold', 0.6)} | range {params.get('range_score_threshold', 0.55)} | counter-trend {params.get('countertrend_score_threshold', 0.7)}
+    - Max RSI per short: {params.get('max_rsi_for_short', 50)}
+    - Score minimi: trend {params.get('trend_score_threshold', 0.56)} | range {params.get('range_score_threshold', 0.55)} | counter-trend {params.get('countertrend_score_threshold', 0.7)}
 - ATR SL factor: {params.get('atr_sl_factor', 1.2)} | trailing ATR: {params.get('trailing_atr_factor', 1.0)} | breakeven R: {params.get('breakeven_R', 1.0)}
 - Reverse abilitato: {params.get('reverse_enabled', True)} | Max daily trades: {params.get('max_daily_trades', 3)} | Max posizioni aperte: {params.get('max_open_positions', 3)}
 
@@ -373,6 +460,311 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
         for d in decision_json.get("decisions", []):
             symbol_key = (d.get('symbol') or '').upper()
             rationale_suffix = []
+            score_val = d.get("score")
+            tech = assets_summary.get(symbol_key, {})
+            computed_score = weighted_score(d.get('action', ''), tech) if is_open_action(d.get('action', '')) else None
+            if computed_score is not None:
+                score_val = computed_score
+                d['score'] = computed_score
+            trend_15m = (tech.get("trend_15m") or "").upper()
+            trend_1h = (tech.get("trend_1h") or "").upper()
+            price = tech.get("price")
+            ema20 = tech.get("ema_20")
+            atr_val = tech.get("atr")
+            structure_break = tech.get("structure_break") or {}
+
+            # Dynamic sizing by score
+            if is_open_action(d.get('action', '')) and score_val is not None:
+                try:
+                    s = float(score_val)
+                    if s < 0.70:
+                        d['size_pct'] = 0.05
+                    elif s < 0.80:
+                        d['size_pct'] = 0.10
+                    else:
+                        d['size_pct'] = 0.15
+                    d['score'] = s
+                except Exception:
+                    pass
+
+            # Multi-timeframe confirmation (15m vs 1h)
+            trend_15m = (tech.get("trend_15m") or "").upper()
+            trend_1h = (tech.get("trend_1h") or "").upper()
+            price = tech.get("price")
+            ema20 = tech.get("ema_20")
+            atr_val = tech.get("atr")
+            if is_open_action(d.get('action', '')) and trend_15m and trend_1h and trend_15m != trend_1h:
+                d['action'] = 'HOLD'
+                rationale_suffix.append('mtf_trend_mismatch')
+
+            # Volume filter
+            vol_ratio = tech.get("volume_ratio")
+            if is_open_action(d.get('action', '')) and vol_ratio is not None and vol_ratio < 1.3:
+                d['action'] = 'HOLD'
+                rationale_suffix.append('low_volume')
+
+            # MACD momentum filter (only strong positive blocks shorts)
+            macd_hist = tech.get("macd_hist")
+            macd_prev = tech.get("macd_hist_prev")
+            macd_prev2 = tech.get("macd_hist_prev2")
+            if (
+                is_open_action(d.get('action', ''))
+                and d.get('action') == "OPEN_SHORT"
+                and macd_hist is not None
+                and atr_val
+                and macd_hist > atr_val * 0.25
+            ):
+                d['size_pct'] = d.get('size_pct', 0.1) * 0.7
+                rationale_suffix.append('macd_positive_soft')
+            # MACD veto only on strong opposite momentum
+            if (
+                is_open_action(d.get('action', ''))
+                and d.get('action') == "OPEN_LONG"
+                and macd_hist is not None
+                and atr_val
+                and macd_hist < -0.25 * atr_val
+            ):
+                d['size_pct'] = d.get('size_pct', 0.1) * 0.7
+                rationale_suffix.append('macd_negative_soft')
+            # Momentum improvement: allow negative MACD if improving or small magnitude
+            macd_prev = tech.get("macd_hist_prev")
+            if (
+                is_open_action(d.get('action', ''))
+                and macd_hist is not None
+                and atr_val
+            ):
+                improving = macd_prev is not None and macd_hist > macd_prev
+                small_mag = abs(macd_hist) < (0.25 * atr_val)
+                if improving or small_mag:
+                    rationale_suffix = [r for r in rationale_suffix if r != 'macd_positive_strong']
+
+            # Breakout requirement
+            breakout = tech.get("breakout") or {}
+            breakout_long = breakout.get("long")
+            breakout_short = breakout.get("short")
+            high_20 = tech.get("high_20")
+            low_20 = tech.get("low_20")
+            if is_open_action(d.get('action', '')):
+                if d.get('action') == "OPEN_LONG" and breakout_long is not None and not breakout_long:
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('no_breakout_long')
+                if d.get('action') == "OPEN_SHORT" and breakout_short is not None and not breakout_short:
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('no_breakout_short')
+
+            # Transition regime gating
+            regime_val = (tech.get("regime") or "").lower()
+            if (
+                is_open_action(d.get('action', ''))
+                and regime_val == "transition"
+            ):
+                allow_transition = False
+                if (
+                    trend_15m == "BULLISH"
+                    and trend_1h == "BULLISH"
+                    and breakout_long
+                    and vol_ratio is not None
+                    and vol_ratio >= 1.3
+                    and high_20 is not None
+                    and price is not None
+                    and price > high_20
+                    and (score_val or 0) >= 0.58
+                ):
+                    allow_transition = True
+                if (
+                    trend_15m == "BEARISH"
+                    and trend_1h == "BEARISH"
+                    and breakout_short
+                    and vol_ratio is not None
+                    and vol_ratio >= 1.3
+                    and low_20 is not None
+                    and price is not None
+                    and price < low_20
+                    and (score_val or 0) >= 0.58
+                ):
+                    allow_transition = True
+
+                if not (
+                    allow_transition
+                    or (
+                        (score_val or 0) >= 0.58
+                        and vol_ratio is not None
+                        and vol_ratio >= 1.3
+                        and (
+                            (d.get('action') == "OPEN_LONG" and breakout_long)
+                            or (d.get('action') == "OPEN_SHORT" and breakout_short)
+                        )
+                    )
+                ):
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('transition_guard')
+                else:
+                    if is_open_action(d.get('action', '')):
+                        d['size_pct'] = min(d.get('size_pct', 0.0), 0.5)
+                        rationale_suffix.append('transition_risk')
+
+            # RSI windows (more permissive dead-zone handling)
+            rsi_val = tech.get("rsi") or tech.get("rsi_7") or 0
+            if (
+                is_open_action(d.get('action', ''))
+                and d.get('action') == "OPEN_SHORT"
+                and (trend_1h == "BEARISH" or trend_15m == "BEARISH")
+                and rsi_val < params.get("max_rsi_for_short", 50)
+            ):
+                rationale_suffix.append('rsi_soft_short')
+
+            # Distance from EMA20 (adaptive R/R filter) — only for counter-trend entries
+            if is_open_action(d.get('action', '')) and price and ema20 and atr_val:
+                main_trend = trend_1h or trend_15m
+                counter_trend = (
+                    (d.get('action') == "OPEN_LONG" and main_trend == "BEARISH")
+                    or (d.get('action') == "OPEN_SHORT" and main_trend == "BULLISH")
+                )
+                if counter_trend:
+                    dist_atr = abs(price - ema20) / atr_val if atr_val else 999
+                    vol_ratio = tech.get("volume_ratio")
+                    vol_boost = clamp(((vol_ratio - 1.0) / 2.0), 0, 1) if vol_ratio is not None else 0
+                    rejection_long = bool((tech.get("structure_break") or {}).get("long") or breakout_long)
+                    rejection_short = bool((tech.get("structure_break") or {}).get("short") or breakout_short)
+                    rejection = rejection_long if d.get('action') == "OPEN_LONG" else rejection_short
+                    trend_align = 1 if ((d.get('action') == "OPEN_LONG" and trend_15m == "BULLISH" and trend_1h == "BULLISH") or (d.get('action') == "OPEN_SHORT" and trend_15m == "BEARISH" and trend_1h == "BEARISH")) else 0
+                    quality = 0.5 * (1 if rejection else 0) + 0.3 * vol_boost + 0.2 * trend_align
+                    min_dist_required = clamp(1.5 - 0.2 * quality, 1.3, 1.5)
+                    if dist_atr < min_dist_required:
+                        d['action'] = 'HOLD'
+                        rationale_suffix.append(f'distance_filter<{min_dist_required:.2f}ATR')
+
+            # Pullback filter (long only)
+            if is_open_action(d.get('action', '')) and d.get('action') == "OPEN_LONG" and price and ema20 and atr_val:
+                near_ema = abs(price - ema20) <= atr_val
+                rsi_val = tech.get("rsi") or tech.get("rsi_7") or 0
+                if not (trend_15m == "BULLISH" and near_ema and rsi_val > 38):
+                    rationale_suffix.append('pullback_filter_fail')
+                    d['action'] = 'HOLD'
+
+            # Trend pullback short (allows neutral momentum)
+            trend_pullback_short = False
+            if (
+                is_open_action(d.get('action', ''))
+                and d.get('action') == "OPEN_SHORT"
+                and regime_val == "trend_bear"
+                and trend_1h == "BEARISH"
+                and trend_15m == "BEARISH"
+                and price
+                and ema20
+                and price < ema20  # sotto EMA20/50 area
+                and 35 <= (tech.get("rsi") or tech.get("rsi_7") or 0) <= 55
+                and ((tech.get("structure_break") or {}).get("short") or (last_low_15m and price < last_low_15m))
+                and (score_val or 0) >= params.get("trend_score_threshold", 0.56)
+            ):
+                trend_pullback_short = True
+                d['path'] = "bear_pullback_short"
+                d['leverage'] = min(d.get('leverage', params.get("default_leverage", 5)), 5)
+                d['size_pct'] = d.get('size_pct', 0.15)
+
+            # Bear continuation short (RSI 25–45, tighter risk)
+            bear_continuation_short = False
+            if (
+                is_open_action(d.get('action', ''))
+                and d.get('action') == "OPEN_SHORT"
+                and regime_val == "trend_bear"
+                and trend_1h == "BEARISH"
+                and trend_15m == "BEARISH"
+                and price
+                and ema20
+                and price < ema20
+                and 25 <= (tech.get("rsi") or tech.get("rsi_7") or 0) <= 45
+                and (
+                    (last_low_15m and price < (last_low_15m - (0.10 * atr_val if atr_val else 0)))
+                    or (low_20 is not None and price < low_20)
+                )
+                and ((vol_ratio is not None and vol_ratio >= 1.2) or breakout_short)
+                and (score_val or 0) >= 0.58
+            ):
+                bear_continuation_short = True
+                d['path'] = "bear_continuation_short"
+                d['leverage'] = min(d.get('leverage', 3), 3)
+                d['size_pct'] = min(d.get('size_pct', 0.15) * 0.7, 0.15)
+
+            # Counter-trend long in bear (small size)
+            counter_trend_long = False
+            if (
+                is_open_action(d.get('action', ''))
+                and d.get('action') == "OPEN_LONG"
+                and regime_val == "trend_bear"
+                and (tech.get("rsi") or tech.get("rsi_7") or 0) < 30
+                and price
+                and ema20
+                and atr_val
+                and abs(price - ema20) >= 1.8 * atr_val
+                and (
+                    (macd_prev is not None and macd_prev2 is not None and macd_hist is not None and macd_hist > macd_prev > macd_prev2)
+                    or (last_high_15m and price > (last_high_15m + 0.10 * atr_val))
+                )
+                and vol_ratio is not None
+                and vol_ratio >= 1.5
+                and (score_val or 0) >= params.get("countertrend_score_threshold", 0.7)
+            ):
+                counter_trend_long = True
+                d['path'] = "counter_trend_long"
+                d['leverage'] = min(max(d.get('leverage', 2), 2), 3)
+                d['size_pct'] = min(max(d.get('size_pct', 0.08), 0.05), 0.10)
+
+            macd_improving = macd_prev is not None and macd_hist is not None and macd_prev2 is not None and ((d.get('action') == "OPEN_LONG" and macd_hist > macd_prev > macd_prev2) or (d.get('action') == "OPEN_SHORT" and macd_hist < macd_prev < macd_prev2))
+            macd_small = macd_hist is not None and atr_val and abs(macd_hist) < 0.25 * atr_val
+
+            # Altcoin depends on BTC context
+            if is_open_action(d.get('action', '')) and symbol_key not in ("BTC", "BTCUSDT"):
+                btc = assets_summary.get("BTCUSDT") or assets_summary.get("BTC") or {}
+                btc_trend = (btc.get("trend") or "").upper()
+                btc_rsi = float(btc.get("rsi") or 0)
+                if btc_trend == "BEARISH" or btc_rsi <= 45:
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('btc_correlation_block')
+
+            # Quality score: count strong conditions
+            conditions_true = 0
+            if trend_15m and trend_1h and trend_15m == trend_1h:
+                conditions_true += 1
+            if breakout_long and breakout_long is True and d.get('action') == "OPEN_LONG":
+                conditions_true += 1
+            if breakout_short and breakout_short is True and d.get('action') == "OPEN_SHORT":
+                conditions_true += 1
+            if vol_ratio is not None and vol_ratio >= 1.3:
+                conditions_true += 1
+            if price and ema20 and atr_val and abs(price - ema20) <= atr_val:
+                conditions_true += 1
+            if trend_pullback_short:
+                conditions_true = max(conditions_true, 3)
+            if is_open_action(d.get('action', '')) and conditions_true < 3:
+                d['action'] = 'HOLD'
+                rationale_suffix.append('quality_score_low')
+
+            # Hold quality flag
+            if d.get('action') == 'HOLD':
+                if conditions_true >= 2 or (vol_ratio is not None and vol_ratio >= 1.2):
+                    d['hold_quality'] = "weak"
+                else:
+                    d['hold_quality'] = "strong"
+            else:
+                d['hold_quality'] = None
+
+            # Entry triggers (need at least one)
+            if is_open_action(d.get('action', '')) and d['action'] != 'HOLD':
+                trigger_price = False
+                trigger_momentum = False
+                trigger_time = False  # placeholder
+                last_high_15m = tech.get("last_high_15m")
+                last_low_15m = tech.get("last_low_15m")
+                if last_high_15m and price and d.get('action') == "OPEN_LONG" and price > last_high_15m:
+                    trigger_price = True
+                if last_low_15m and price and d.get('action') == "OPEN_SHORT" and price < last_low_15m:
+                    trigger_price = True
+                if macd_improving or macd_small:
+                    trigger_momentum = True
+                if not (trigger_price or trigger_momentum or trigger_time):
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('no_entry_trigger')
 
             # Disable lists
             if symbol_key in [s.upper() for s in controls.get('disable_symbols', [])]:
@@ -385,7 +777,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 rationale_suffix.append('blocked by regime filter')
 
             # Cooldown per symbol
-            cd_minutes = controls.get('cooldown_minutes') or 0
+            cd_minutes = max(controls.get('cooldown_minutes') or 0, MIN_SYMBOL_COOLDOWN_MINUTES)
             if cd_minutes > 0:
                 last_ts = symbol_cooldowns.get(symbol_key, 0)
                 if last_ts and (now_ts - last_ts) < cd_minutes * 60 and is_open_action(d.get('action', '')):
