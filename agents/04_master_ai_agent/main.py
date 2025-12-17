@@ -505,6 +505,8 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
 
             # MACD momentum filter (only strong positive blocks shorts)
             macd_hist = tech.get("macd_hist")
+            macd_prev = tech.get("macd_hist_prev")
+            macd_prev2 = tech.get("macd_hist_prev2")
             if (
                 is_open_action(d.get('action', ''))
                 and d.get('action') == "OPEN_SHORT"
@@ -512,8 +514,8 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 and atr_val
                 and macd_hist > atr_val * 0.25
             ):
-                d['action'] = 'HOLD'
-                rationale_suffix.append('macd_positive_strong')
+                d['size_pct'] = d.get('size_pct', 0.1) * 0.7
+                rationale_suffix.append('macd_positive_soft')
             # MACD veto only on strong opposite momentum
             if (
                 is_open_action(d.get('action', ''))
@@ -522,8 +524,8 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 and atr_val
                 and macd_hist < -0.25 * atr_val
             ):
-                d['action'] = 'HOLD'
-                rationale_suffix.append('macd_negative_strong')
+                d['size_pct'] = d.get('size_pct', 0.1) * 0.7
+                rationale_suffix.append('macd_negative_soft')
             # Momentum improvement: allow negative MACD if improving or small magnitude
             macd_prev = tech.get("macd_hist_prev")
             if (
@@ -609,8 +611,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 and (trend_1h == "BEARISH" or trend_15m == "BEARISH")
                 and rsi_val < params.get("max_rsi_for_short", 50)
             ):
-                d['action'] = 'HOLD'
-                rationale_suffix.append('rsi_too_low_for_short')
+                rationale_suffix.append('rsi_soft_short')
 
             # Distance from EMA20 (adaptive R/R filter) — only for counter-trend entries
             if is_open_action(d.get('action', '')) and price and ema20 and atr_val:
@@ -655,6 +656,9 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 and (score_val or 0) >= params.get("trend_score_threshold", 0.58)
             ):
                 trend_pullback_short = True
+                # Soft MACD improvement allowance
+            macd_improving = macd_prev is not None and macd_hist is not None and macd_prev2 is not None and ((d.get('action') == "OPEN_LONG" and macd_hist > macd_prev > macd_prev2) or (d.get('action') == "OPEN_SHORT" and macd_hist < macd_prev < macd_prev2))
+            macd_small = macd_hist is not None and atr_val and abs(macd_hist) < 0.25 * atr_val
 
             # Altcoin depends on BTC context
             if is_open_action(d.get('action', '')) and symbol_key not in ("BTC", "BTCUSDT"):
@@ -689,6 +693,25 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                     d['hold_quality'] = "weak"
                 else:
                     d['hold_quality'] = "strong"
+            else:
+                d['hold_quality'] = None
+
+            # Entry triggers (need at least one)
+            if is_open_action(d.get('action', '')) and d['action'] != 'HOLD':
+                trigger_price = False
+                trigger_momentum = False
+                trigger_time = False  # placeholder
+                last_high_15m = tech.get("last_high_15m")
+                last_low_15m = tech.get("last_low_15m")
+                if last_high_15m and price and d.get('action') == "OPEN_LONG" and price > last_high_15m:
+                    trigger_price = True
+                if last_low_15m and price and d.get('action') == "OPEN_SHORT" and price < last_low_15m:
+                    trigger_price = True
+                if macd_improving or macd_small:
+                    trigger_momentum = True
+                if not (trigger_price or trigger_momentum or trigger_time):
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('no_entry_trigger')
 
             # Disable lists
             if symbol_key in [s.upper() for s in controls.get('disable_symbols', [])]:

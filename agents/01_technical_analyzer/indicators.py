@@ -80,6 +80,7 @@ class CryptoTechnicalAnalysisBybit:
         df["macd_signal"] = macd_sig
         df["macd_hist"] = macd_diff
         df["macd_hist_prev"] = df["macd_hist"].shift(1)
+        df["macd_hist_prev2"] = df["macd_hist"].shift(2)
         df["rsi_7"] = self.calculate_rsi(df["close"], 7)
         df["rsi_14"] = self.calculate_rsi(df["close"], 14)
         df["atr_14"] = self.calculate_atr(df["high"], df["low"], df["close"], 14)
@@ -146,6 +147,9 @@ class CryptoTechnicalAnalysisBybit:
         long_exit_votes = sum([bool(rsi_below_50), bool(macd_hist_falling), bool(close_below_ema20)])
         short_exit_votes = sum([bool(rsi_above_50), bool(macd_hist_rising), bool(close_above_ema20)])
 
+        last_high_15m = float(last["high"])
+        last_low_15m = float(last["low"])
+
         breakout_long = False
         breakout_short = False
         if len(df) >= 10:
@@ -165,12 +169,15 @@ class CryptoTechnicalAnalysisBybit:
             "macd": macd_trend,
             "macd_hist": round(last["macd_hist"], 6),
             "macd_hist_prev": round(prev["macd_hist"], 6),
+            "macd_hist_prev2": round(prev2["macd_hist"], 6),
             "support": round(last["close"] - (2 * atr_value), 2),
             "resistance": round(last["close"] + (2 * atr_value), 2),
             "breakout": {
                 "long": bool(breakout_long),
                 "short": bool(breakout_short),
             },
+            "last_high_15m": last_high_15m,
+            "last_low_15m": last_low_15m,
             "high_20": round(high_20, 4) if pd.notna(high_20) else None,
             "low_20": round(low_20, 4) if pd.notna(low_20) else None,
             "structure_break": {
