@@ -488,7 +488,8 @@ def check_and_update_trailing_stops():
 
             new_sl_price = None
             profit_distance = (mark_price - entry_price) if side_dir == "long" else (entry_price - mark_price)
-            fee_buffer_abs = entry_price * BE_FEE_BUFFER_PCT
+            effective_fee_buffer_pct = BE_FEE_BUFFER_PCT / max(1.0, leverage)
+            fee_buffer_abs = entry_price * effective_fee_buffer_pct
             r_multiple = profit_distance / risk_distance if risk_distance > 0 else 0.0
             sl_at_be = (side_dir == "long" and sl_current >= entry_price) or (side_dir == "short" and sl_current <= entry_price)
 
