@@ -309,7 +309,8 @@ async def analysis_cycle():
                         "symbol": sym,
                         "side": action,
                         "leverage": d.get('leverage', 5),
-                        "size_pct": d.get('size_pct', 0.15)
+                        "size_pct": d.get('size_pct', 0.15),
+                        "score": d.get('score')
                     })
                     print(f"        ✅ Result: {res.json()}")
 

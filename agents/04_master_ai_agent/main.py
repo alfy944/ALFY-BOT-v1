@@ -44,7 +44,7 @@ DEFAULT_PARAMS = {
     "atr_sl_factor": 1.2,
     "trailing_atr_factor": 1.0,
     "breakeven_R": 1.0,
-    "reverse_enabled": True,
+    "reverse_enabled": False,
     "max_daily_trades": 3,
     "max_open_positions": 3,
 }
@@ -64,6 +64,7 @@ EVOLVED_PARAMS_FILE = "/data/evolved_params.json"
 API_COSTS_FILE = "/data/api_costs.json"
 AI_DECISIONS_FILE = "/data/ai_decisions.json"
 MASTER_STATE_FILE = "/data/master_state.json"
+MIN_SYMBOL_COOLDOWN_MINUTES = 45
 
 
 def log_api_call(tokens_in: int, tokens_out: int):
@@ -164,6 +165,7 @@ class Decision(BaseModel):
     action: Literal["OPEN_LONG", "OPEN_SHORT", "HOLD", "CLOSE"]
     leverage: float = 1.0
     size_pct: float = 0.0
+    score: Optional[float] = None
     rationale: str
 
     # Validator permissivi
@@ -274,6 +276,7 @@ FORMATO RISPOSTA JSON OBBLIGATORIO:
       "action": "OPEN_LONG" | "OPEN_SHORT" | "HOLD" | "CLOSE",
       "leverage": 5.0,
       "size_pct": 0.15,
+      "score": 0.82,
       "rationale": "RSI basso su supporto"
     }
   ]
@@ -299,6 +302,9 @@ def decide_batch(payload: AnalysisPayload):
         assets_summary = {}
         for k, v in payload.assets_data.items():
             t = v.get('tech', {})
+            if t.get("regime") == "range":
+                logger.info(f"⏳ Skip {k} per regime range")
+                continue
             assets_summary[k] = {
                 "price": t.get('price'),
                 "rsi_7": t.get('details', {}).get('rsi_7') or t.get('rsi_7'),
@@ -373,6 +379,21 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
         for d in decision_json.get("decisions", []):
             symbol_key = (d.get('symbol') or '').upper()
             rationale_suffix = []
+            score_val = d.get("score")
+
+            # Dynamic sizing by score
+            if is_open_action(d.get('action', '')) and score_val is not None:
+                try:
+                    s = float(score_val)
+                    if s < 0.70:
+                        d['size_pct'] = 0.05
+                    elif s < 0.80:
+                        d['size_pct'] = 0.10
+                    else:
+                        d['size_pct'] = 0.15
+                    d['score'] = s
+                except Exception:
+                    pass
 
             # Disable lists
             if symbol_key in [s.upper() for s in controls.get('disable_symbols', [])]:
@@ -385,7 +406,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 rationale_suffix.append('blocked by regime filter')
 
             # Cooldown per symbol
-            cd_minutes = controls.get('cooldown_minutes') or 0
+            cd_minutes = max(controls.get('cooldown_minutes') or 0, MIN_SYMBOL_COOLDOWN_MINUTES)
             if cd_minutes > 0:
                 last_ts = symbol_cooldowns.get(symbol_key, 0)
                 if last_ts and (now_ts - last_ts) < cd_minutes * 60 and is_open_action(d.get('action', '')):

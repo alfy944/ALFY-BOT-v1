@@ -56,6 +56,7 @@ WARNING_THRESHOLD = float(os.getenv("WARNING_THRESHOLD", "-0.08"))
 AI_REVIEW_THRESHOLD = float(os.getenv("AI_REVIEW_THRESHOLD", "-0.12"))
 REVERSE_THRESHOLD = float(os.getenv("REVERSE_THRESHOLD", "-0.15"))
 HARD_STOP_THRESHOLD = float(os.getenv("HARD_STOP_THRESHOLD", "-0.20"))
+REVERSE_ENABLED = os.getenv("REVERSE_ENABLED", "false").lower() == "true"
 
 REVERSE_COOLDOWN_MINUTES = int(os.getenv("REVERSE_COOLDOWN_MINUTES", "30"))
 REVERSE_LEVERAGE = float(os.getenv("REVERSE_LEVERAGE", "5.0"))
@@ -267,6 +268,7 @@ class OrderRequest(BaseModel):
     leverage: float = 1.0
     size_pct: float = 0.0      # frazione del free USDT (es. 0.15)
     sl_pct: float = 0.0        # frazione (es. 0.04)
+    score: Optional[float] = None
 
 class CloseRequest(BaseModel):
     symbol: str
@@ -492,6 +494,8 @@ def check_and_update_trailing_stops():
             fee_buffer_abs = entry_price * effective_fee_buffer_pct
             r_multiple = profit_distance / risk_distance if risk_distance > 0 else 0.0
             sl_at_be = (side_dir == "long" and sl_current >= entry_price) or (side_dir == "short" and sl_current <= entry_price)
+            quality_score = position_risk_meta.get(sym_id, {}).get("score")
+            trailing_atr_mult = 1.5 if (quality_score is not None and quality_score > 0.75) else 1.0
 
             momentum_allowed = False
             if risk_distance > 0:
@@ -556,7 +560,7 @@ def check_and_update_trailing_stops():
             if (position_risk_meta.get(sym_id, {}).get("breakeven_reached") or sl_at_be) and (atr or swing_low or swing_high or ema_20):
                 trailing_candidates = []
                 if atr:
-                    trailing_candidates.append(mark_price - (atr * 1.0) if side_dir == "long" else mark_price + (atr * 1.0))
+                    trailing_candidates.append(mark_price - (atr * trailing_atr_mult) if side_dir == "long" else mark_price + (atr * trailing_atr_mult))
 
                 structure_level = swing_low if side_dir == "long" else swing_high
                 if not structure_level:
@@ -900,7 +904,7 @@ def check_recent_closes_and_save_cooldown():
 # SMART REVERSE SYSTEM
 # =========================================================
 def check_smart_reverse():
-    if not ENABLE_AI_REVIEW or not exchange:
+    if not ENABLE_AI_REVIEW or not REVERSE_ENABLED or not exchange:
         return
 
     try:
@@ -1291,6 +1295,7 @@ def open_position(order: OrderRequest):
             "breakeven_reached": False,
             "size_pct": float(order.size_pct),
             "leverage": float(order.leverage),
+            "score": float(order.score) if order.score is not None else None,
             "market_conditions": {**(risk_data or {}), "initial_risk_pct": round(initial_risk_pct, 4)},
             "initial_atr_pct": initial_atr_pct,
             "opened_at": time.time(),

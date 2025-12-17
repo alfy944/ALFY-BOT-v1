@@ -66,6 +66,7 @@ class CryptoTechnicalAnalysisBybit:
 
         df["ema_20"] = self.calculate_ema(df["close"], 20)
         df["ema_50"] = self.calculate_ema(df["close"], 50)
+        df["ema_200"] = self.calculate_ema(df["close"], 200)
         macd_line, macd_sig, macd_diff = self.calculate_macd(df["close"])
         df["macd_line"] = macd_line
         df["macd_signal"] = macd_sig
@@ -99,10 +100,20 @@ class CryptoTechnicalAnalysisBybit:
         volatility_ratio = (atr_value / last["close"]) if last["close"] else 0
         volatility = "high" if volatility_ratio > 0.02 else "low" if volatility_ratio < 0.01 else "normal"
 
-        regime = "trend"
-        if atr_value and distance_from_ema50 <= atr_value * 0.25:
+        # Regime detection rafforzato per bloccare il range intraday
+        ema20 = last["ema_20"]
+        ema50 = last["ema_50"]
+        ema200 = last["ema_200"]
+        atr_pct = (atr_value / last["close"] * 100) if last["close"] else 0
+        if abs(ema20 - ema50) / last["close"] < 0.003 and atr_pct < 0.35:
             regime = "range"
+        elif ema20 > ema50 > ema200:
+            regime = "trend_bull"
+        elif ema20 < ema50 < ema200:
+            regime = "trend_bear"
         elif (trend == "BULLISH" and macd_trend == "NEGATIVE") or (trend == "BEARISH" and macd_trend == "POSITIVE"):
+            regime = "transition"
+        else:
             regime = "transition"
 
         # Momentum exit conditions (per-bar, candle close driven)

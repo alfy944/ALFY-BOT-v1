@@ -157,18 +157,6 @@ class BybitClient:
                 closed = []
                 for trade in response['result']['list']:
                     trade_ts = int(trade.get('updatedTime'))
-                    entry_price = self.safe_float(trade.get('avgEntryPrice'))
-                    exit_price = self.safe_float(trade.get('avgExitPrice'))
-                    side = (trade.get('side') or "").lower()
-                    leverage = self.safe_float(trade.get('leverage', 1))
-
-                    pnl_pct = 0.0
-                    if entry_price > 0 and exit_price > 0:
-                        if side in ["sell", "short"]:
-                            pnl_pct = ((entry_price - exit_price) / entry_price) * leverage * 100
-                        else:
-                            pnl_pct = ((exit_price - entry_price) / entry_price) * leverage * 100
-                    
                     # Filtra solo trade dopo start_date
                     if trade_ts >= start_date.timestamp() * 1000:
                         closed.append({
