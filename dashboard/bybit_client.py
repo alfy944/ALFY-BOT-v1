@@ -157,7 +157,6 @@ class BybitClient:
                 closed = []
                 for trade in response['result']['list']:
                     trade_ts = int(trade.get('updatedTime'))
-                    
                     # Filtra solo trade dopo start_date
                     if trade_ts >= start_date.timestamp() * 1000:
                         closed.append({

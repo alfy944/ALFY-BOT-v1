@@ -66,6 +66,7 @@ class CryptoTechnicalAnalysisBybit:
 
         df["ema_20"] = self.calculate_ema(df["close"], 20)
         df["ema_50"] = self.calculate_ema(df["close"], 50)
+        df["ema_200"] = self.calculate_ema(df["close"], 200)
         macd_line, macd_sig, macd_diff = self.calculate_macd(df["close"])
         df["macd_line"] = macd_line
         df["macd_signal"] = macd_sig
@@ -82,6 +83,15 @@ class CryptoTechnicalAnalysisBybit:
         prev2 = df.iloc[-3]
         pp = self.calculate_pivot_points(last["high"], last["low"], last["close"])
 
+        swing_high_raw = df["high"].iloc[-20:-1].max()
+        swing_low_raw = df["low"].iloc[-20:-1].min()
+        swing_high = float(swing_high_raw) if pd.notna(swing_high_raw) else None
+        swing_low = float(swing_low_raw) if pd.notna(swing_low_raw) else None
+
+        vol_window = df["volume"].rolling(window=20).mean()
+        avg_volume = vol_window.iloc[-2] if len(vol_window) >= 2 else last["volume"]
+        volume_spike = pd.notna(avg_volume) and last["volume"] > (avg_volume * 1.5)
+
         trend = "BULLISH" if last["close"] > last["ema_50"] else "BEARISH"
         macd_trend = "POSITIVE" if last["macd_line"] > last["macd_signal"] else "NEGATIVE"
 
@@ -90,10 +100,20 @@ class CryptoTechnicalAnalysisBybit:
         volatility_ratio = (atr_value / last["close"]) if last["close"] else 0
         volatility = "high" if volatility_ratio > 0.02 else "low" if volatility_ratio < 0.01 else "normal"
 
-        regime = "trend"
-        if atr_value and distance_from_ema50 <= atr_value * 0.25:
+        # Regime detection rafforzato per bloccare il range intraday
+        ema20 = last["ema_20"]
+        ema50 = last["ema_50"]
+        ema200 = last["ema_200"]
+        atr_pct = (atr_value / last["close"] * 100) if last["close"] else 0
+        if abs(ema20 - ema50) / last["close"] < 0.003 and atr_pct < 0.35:
             regime = "range"
+        elif ema20 > ema50 > ema200:
+            regime = "trend_bull"
+        elif ema20 < ema50 < ema200:
+            regime = "trend_bear"
         elif (trend == "BULLISH" and macd_trend == "NEGATIVE") or (trend == "BEARISH" and macd_trend == "POSITIVE"):
+            regime = "transition"
+        else:
             regime = "transition"
 
         # Momentum exit conditions (per-bar, candle close driven)
@@ -119,6 +139,13 @@ class CryptoTechnicalAnalysisBybit:
             "macd_hist": round(last["macd_hist"], 6),
             "support": round(last["close"] - (2 * last["atr_14"]), 2),
             "resistance": round(last["close"] + (2 * last["atr_14"]), 2),
+            "structure_break": {
+                "long": bool(swing_high and last["close"] > swing_high),
+                "short": bool(swing_low and last["close"] < swing_low),
+                "swing_high": round(swing_high, 4) if swing_high else None,
+                "swing_low": round(swing_low, 4) if swing_low else None,
+            },
+            "volume_spike": bool(volume_spike),
             "momentum_exit": {
                 "long": bool(long_exit_votes >= 2),
                 "short": bool(short_exit_votes >= 2),
