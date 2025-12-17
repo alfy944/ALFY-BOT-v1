@@ -254,6 +254,10 @@ def weighted_score(action: str, tech: dict) -> Optional[float]:
         return None
 
 
+def clamp(val: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, val))
+
+
 def count_recent_actions(decisions: list, minutes: int, action_filter=None) -> int:
     cutoff = datetime.utcnow().timestamp() - minutes * 60
     count = 0
@@ -462,6 +466,12 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             if computed_score is not None:
                 score_val = computed_score
                 d['score'] = computed_score
+            trend_15m = (tech.get("trend_15m") or "").upper()
+            trend_1h = (tech.get("trend_1h") or "").upper()
+            price = tech.get("price")
+            ema20 = tech.get("ema_20")
+            atr_val = tech.get("atr")
+            structure_break = tech.get("structure_break") or {}
 
             # Dynamic sizing by score
             if is_open_action(d.get('action', '')) and score_val is not None:
@@ -546,14 +556,26 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 d['action'] = 'HOLD'
                 rationale_suffix.append('rsi_too_low_for_short')
 
-            # Distance from EMA20 (avoid late entries)
-            price = tech.get("price")
-            ema20 = tech.get("ema_20")
-            atr_val = tech.get("atr")
+            # Distance from EMA20 (adaptive R/R filter) — only for counter-trend entries
             if is_open_action(d.get('action', '')) and price and ema20 and atr_val:
-                if abs(price - ema20) > atr_val * 1.8:
-                    d['action'] = 'HOLD'
-                    rationale_suffix.append('late_move')
+                main_trend = trend_1h or trend_15m
+                counter_trend = (
+                    (d.get('action') == "OPEN_LONG" and main_trend == "BEARISH")
+                    or (d.get('action') == "OPEN_SHORT" and main_trend == "BULLISH")
+                )
+                if counter_trend:
+                    dist_atr = abs(price - ema20) / atr_val if atr_val else 999
+                    vol_ratio = tech.get("volume_ratio")
+                    vol_boost = clamp(((vol_ratio - 1.0) / 2.0), 0, 1) if vol_ratio is not None else 0
+                    rejection_long = bool((tech.get("structure_break") or {}).get("long") or breakout_long)
+                    rejection_short = bool((tech.get("structure_break") or {}).get("short") or breakout_short)
+                    rejection = rejection_long if d.get('action') == "OPEN_LONG" else rejection_short
+                    trend_align = 1 if ((d.get('action') == "OPEN_LONG" and trend_15m == "BULLISH" and trend_1h == "BULLISH") or (d.get('action') == "OPEN_SHORT" and trend_15m == "BEARISH" and trend_1h == "BEARISH")) else 0
+                    quality = 0.5 * (1 if rejection else 0) + 0.3 * vol_boost + 0.2 * trend_align
+                    min_dist_required = clamp(1.5 - 0.2 * quality, 1.3, 1.5)
+                    if dist_atr < min_dist_required:
+                        d['action'] = 'HOLD'
+                        rationale_suffix.append(f'distance_filter<{min_dist_required:.2f}ATR')
 
             # Pullback filter (long only)
             if is_open_action(d.get('action', '')) and d.get('action') == "OPEN_LONG" and price and ema20 and atr_val:
