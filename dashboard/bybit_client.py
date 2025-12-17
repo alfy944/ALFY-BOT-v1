@@ -163,6 +163,7 @@ class BybitClient:
                             'Symbol': trade.get('symbol'),
                             'Side': trade.get('side'),
                             'Closed PnL': float(trade.get('closedPnl')),
+                            'PnL %': round(pnl_pct, 2),
                             'Exit Time': datetime.fromtimestamp(trade_ts/1000).strftime('%Y-%m-%d %H:%M:%S'),
                             'ts': trade_ts,
                             'exec_fee': abs(self.safe_float(trade.get('cumExecFee', 0))),  # Fee totale per il trade
