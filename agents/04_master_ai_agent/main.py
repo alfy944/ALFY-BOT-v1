@@ -514,6 +514,16 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             ):
                 d['action'] = 'HOLD'
                 rationale_suffix.append('macd_positive_strong')
+            # MACD veto only on strong opposite momentum
+            if (
+                is_open_action(d.get('action', ''))
+                and d.get('action') == "OPEN_LONG"
+                and macd_hist is not None
+                and atr_val
+                and macd_hist < -0.25 * atr_val
+            ):
+                d['action'] = 'HOLD'
+                rationale_suffix.append('macd_negative_strong')
             # Momentum improvement: allow negative MACD if improving or small magnitude
             macd_prev = tech.get("macd_hist_prev")
             if (
@@ -552,11 +562,11 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                     and trend_1h == "BULLISH"
                     and breakout_long
                     and vol_ratio is not None
-                    and vol_ratio >= 1.5
+                    and vol_ratio >= 1.3
                     and high_20 is not None
                     and price is not None
                     and price > high_20
-                    and (score_val or 0) >= 0.60
+                    and (score_val or 0) >= 0.58
                 ):
                     allow_transition = True
                 if (
@@ -564,18 +574,18 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                     and trend_1h == "BEARISH"
                     and breakout_short
                     and vol_ratio is not None
-                    and vol_ratio >= 1.5
+                    and vol_ratio >= 1.3
                     and low_20 is not None
                     and price is not None
                     and price < low_20
-                    and (score_val or 0) >= 0.60
+                    and (score_val or 0) >= 0.58
                 ):
                     allow_transition = True
 
                 if not (
                     allow_transition
                     or (
-                        (score_val or 0) >= 0.75
+                        (score_val or 0) >= 0.58
                         and vol_ratio is not None
                         and vol_ratio >= 1.3
                         and (
@@ -586,6 +596,10 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 ):
                     d['action'] = 'HOLD'
                     rationale_suffix.append('transition_guard')
+                else:
+                    if is_open_action(d.get('action', '')):
+                        d['size_pct'] = min(d.get('size_pct', 0.0), 0.5)
+                        rationale_suffix.append('transition_risk')
 
             # RSI windows (more permissive dead-zone handling)
             rsi_val = tech.get("rsi") or tech.get("rsi_7") or 0
