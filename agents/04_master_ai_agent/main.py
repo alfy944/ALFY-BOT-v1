@@ -188,6 +188,72 @@ def is_open_action(action: str) -> bool:
     return action in ("OPEN_LONG", "OPEN_SHORT")
 
 
+def weighted_score(action: str, tech: dict) -> Optional[float]:
+    """
+    Calcola uno score pesato (trend 50%, momentum 30%, RSI 20%)
+    per evitare medie secche che penalizzano trend chiari con momentum neutro.
+    """
+    try:
+        trend_score = 0.5
+        momentum_score = 0.5
+        rsi_score = 0.5
+
+        trend_15m = (tech.get("trend_15m") or tech.get("trend") or "").upper()
+        trend_1h = (tech.get("trend_1h") or "").upper()
+        action_is_long = action == "OPEN_LONG"
+
+        if trend_15m and trend_1h:
+            same = trend_15m == trend_1h
+            if action_is_long and trend_15m == "BULLISH" and same:
+                trend_score = 1.0
+            elif (not action_is_long) and trend_15m == "BEARISH" and same:
+                trend_score = 1.0
+            elif (action_is_long and trend_15m == "BULLISH") or ((not action_is_long) and trend_15m == "BEARISH"):
+                trend_score = 0.7
+            else:
+                trend_score = 0.4
+
+        macd_hist = tech.get("macd_hist")
+        atr_val = tech.get("atr") or 0
+        if macd_hist is not None:
+            # momentum è neutro salvo forte opposizione (>0.25*ATR)
+            if action_is_long:
+                if macd_hist > 0:
+                    momentum_score = 0.7
+                elif macd_hist < -0.25 * atr_val:
+                    momentum_score = 0.3
+                else:
+                    momentum_score = 0.5
+            else:
+                if macd_hist < 0:
+                    momentum_score = 0.7
+                elif macd_hist > 0.25 * atr_val:
+                    momentum_score = 0.3
+                else:
+                    momentum_score = 0.5
+
+        rsi_val = tech.get("rsi") or tech.get("rsi_7")
+        if rsi_val is not None:
+            if action_is_long:
+                if 45 <= rsi_val <= 60:
+                    rsi_score = 1.0
+                elif 40 <= rsi_val <= 70:
+                    rsi_score = 0.7
+                else:
+                    rsi_score = 0.4
+            else:
+                if 55 <= rsi_val <= 70:
+                    rsi_score = 1.0
+                elif 50 <= rsi_val <= 75:
+                    rsi_score = 0.7
+                else:
+                    rsi_score = 0.4
+
+        return round(0.5 * trend_score + 0.3 * momentum_score + 0.2 * rsi_score, 4)
+    except Exception:
+        return None
+
+
 def count_recent_actions(decisions: list, minutes: int, action_filter=None) -> int:
     cutoff = datetime.utcnow().timestamp() - minutes * 60
     count = 0
@@ -392,6 +458,10 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             rationale_suffix = []
             score_val = d.get("score")
             tech = assets_summary.get(symbol_key, {})
+            computed_score = weighted_score(d.get('action', ''), tech) if is_open_action(d.get('action', '')) else None
+            if computed_score is not None:
+                score_val = computed_score
+                d['score'] = computed_score
 
             # Dynamic sizing by score
             if is_open_action(d.get('action', '')) and score_val is not None:
@@ -430,7 +500,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 and d.get('action') == "OPEN_SHORT"
                 and macd_hist is not None
                 and atr_val
-                and macd_hist > atr_val * 0.2
+                and macd_hist > atr_val * 0.25
             ):
                 d['action'] = 'HOLD'
                 rationale_suffix.append('macd_positive_strong')
@@ -493,6 +563,21 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                     rationale_suffix.append('pullback_filter_fail')
                     d['action'] = 'HOLD'
 
+            # Trend pullback short (allows neutral momentum)
+            trend_pullback_short = False
+            if (
+                is_open_action(d.get('action', ''))
+                and d.get('action') == "OPEN_SHORT"
+                and (trend_1h == "BEARISH" or trend_15m == "BEARISH")
+                and price
+                and ema20
+                and price < ema20  # sotto EMA20/50 area
+                and 45 <= (tech.get("rsi") or tech.get("rsi_7") or 0) <= 55
+                and not (breakout_long is True)  # nessun breakout contrario
+                and (score_val or 0) >= params.get("trend_score_threshold", 0.58)
+            ):
+                trend_pullback_short = True
+
             # Altcoin depends on BTC context
             if is_open_action(d.get('action', '')) and symbol_key not in ("BTC", "BTCUSDT"):
                 btc = assets_summary.get("BTCUSDT") or assets_summary.get("BTC") or {}
@@ -514,6 +599,8 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 conditions_true += 1
             if price and ema20 and atr_val and abs(price - ema20) <= atr_val:
                 conditions_true += 1
+            if trend_pullback_short:
+                conditions_true = max(conditions_true, 3)
             if is_open_action(d.get('action', '')) and conditions_true < 3:
                 d['action'] = 'HOLD'
                 rationale_suffix.append('quality_score_low')
