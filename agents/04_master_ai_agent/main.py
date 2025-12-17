@@ -647,16 +647,69 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             if (
                 is_open_action(d.get('action', ''))
                 and d.get('action') == "OPEN_SHORT"
-                and (trend_1h == "BEARISH" or trend_15m == "BEARISH")
+                and regime_val == "trend_bear"
+                and trend_1h == "BEARISH"
+                and trend_15m == "BEARISH"
                 and price
                 and ema20
                 and price < ema20  # sotto EMA20/50 area
-                and 38 <= (tech.get("rsi") or tech.get("rsi_7") or 0) <= 50
-                and not (breakout_long is True)  # nessun breakout contrario
-                and (score_val or 0) >= params.get("trend_score_threshold", 0.58)
+                and 35 <= (tech.get("rsi") or tech.get("rsi_7") or 0) <= 55
+                and ((tech.get("structure_break") or {}).get("short") or (last_low_15m and price < last_low_15m))
+                and (score_val or 0) >= params.get("trend_score_threshold", 0.56)
             ):
                 trend_pullback_short = True
-                # Soft MACD improvement allowance
+                d['path'] = "bear_pullback_short"
+                d['leverage'] = min(d.get('leverage', params.get("default_leverage", 5)), 5)
+                d['size_pct'] = d.get('size_pct', 0.15)
+
+            # Bear continuation short (RSI 25–45, tighter risk)
+            bear_continuation_short = False
+            if (
+                is_open_action(d.get('action', ''))
+                and d.get('action') == "OPEN_SHORT"
+                and regime_val == "trend_bear"
+                and trend_1h == "BEARISH"
+                and trend_15m == "BEARISH"
+                and price
+                and ema20
+                and price < ema20
+                and 25 <= (tech.get("rsi") or tech.get("rsi_7") or 0) <= 45
+                and (
+                    (last_low_15m and price < (last_low_15m - (0.10 * atr_val if atr_val else 0)))
+                    or (low_20 is not None and price < low_20)
+                )
+                and ((vol_ratio is not None and vol_ratio >= 1.2) or breakout_short)
+                and (score_val or 0) >= 0.58
+            ):
+                bear_continuation_short = True
+                d['path'] = "bear_continuation_short"
+                d['leverage'] = min(d.get('leverage', 3), 3)
+                d['size_pct'] = min(d.get('size_pct', 0.15) * 0.7, 0.15)
+
+            # Counter-trend long in bear (small size)
+            counter_trend_long = False
+            if (
+                is_open_action(d.get('action', ''))
+                and d.get('action') == "OPEN_LONG"
+                and regime_val == "trend_bear"
+                and (tech.get("rsi") or tech.get("rsi_7") or 0) < 30
+                and price
+                and ema20
+                and atr_val
+                and abs(price - ema20) >= 1.8 * atr_val
+                and (
+                    (macd_prev is not None and macd_prev2 is not None and macd_hist is not None and macd_hist > macd_prev > macd_prev2)
+                    or (last_high_15m and price > (last_high_15m + 0.10 * atr_val))
+                )
+                and vol_ratio is not None
+                and vol_ratio >= 1.5
+                and (score_val or 0) >= params.get("countertrend_score_threshold", 0.7)
+            ):
+                counter_trend_long = True
+                d['path'] = "counter_trend_long"
+                d['leverage'] = min(max(d.get('leverage', 2), 2), 3)
+                d['size_pct'] = min(max(d.get('size_pct', 0.08), 0.05), 0.10)
+
             macd_improving = macd_prev is not None and macd_hist is not None and macd_prev2 is not None and ((d.get('action') == "OPEN_LONG" and macd_hist > macd_prev > macd_prev2) or (d.get('action') == "OPEN_SHORT" and macd_hist < macd_prev < macd_prev2))
             macd_small = macd_hist is not None and atr_val and abs(macd_hist) < 0.25 * atr_val
 
