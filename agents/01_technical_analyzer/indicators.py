@@ -64,6 +64,14 @@ class CryptoTechnicalAnalysisBybit:
         df = self.fetch_ohlcv(ticker, "15m", limit=200)
         if df.empty: return {}
 
+        # Multi-timeframe 1h per conferma trend
+        df_1h = self.fetch_ohlcv(ticker, "1h", limit=200)
+        trend_1h = None
+        if not df_1h.empty and len(df_1h) >= 50:
+            df_1h["ema_50"] = self.calculate_ema(df_1h["close"], 50)
+            last_1h = df_1h.iloc[-1]
+            trend_1h = "BULLISH" if last_1h["close"] > last_1h["ema_50"] else "BEARISH"
+
         df["ema_20"] = self.calculate_ema(df["close"], 20)
         df["ema_50"] = self.calculate_ema(df["close"], 50)
         df["ema_200"] = self.calculate_ema(df["close"], 200)
@@ -90,10 +98,12 @@ class CryptoTechnicalAnalysisBybit:
 
         vol_window = df["volume"].rolling(window=20).mean()
         avg_volume = vol_window.iloc[-2] if len(vol_window) >= 2 else last["volume"]
+        volume_ratio = (last["volume"] / avg_volume) if avg_volume else 0
         volume_spike = pd.notna(avg_volume) and last["volume"] > (avg_volume * 1.5)
 
         trend = "BULLISH" if last["close"] > last["ema_50"] else "BEARISH"
         macd_trend = "POSITIVE" if last["macd_line"] > last["macd_signal"] else "NEGATIVE"
+        trend_15m = trend
 
         atr_value = last["atr_14"]
         distance_from_ema50 = abs(last["close"] - last["ema_50"])
@@ -127,10 +137,18 @@ class CryptoTechnicalAnalysisBybit:
         long_exit_votes = sum([bool(rsi_below_50), bool(macd_hist_falling), bool(close_below_ema20)])
         short_exit_votes = sum([bool(rsi_above_50), bool(macd_hist_rising), bool(close_above_ema20)])
 
+        breakout_long = False
+        breakout_short = False
+        if len(df) >= 10:
+            breakout_long = last["close"] > df["high"].iloc[-10:].max()
+            breakout_short = last["close"] < df["low"].iloc[-10:].min()
+
         return {
             "symbol": ticker,
             "price": last["close"],
             "trend": trend,
+            "trend_15m": trend_15m,
+            "trend_1h": trend_1h,
             "regime": regime,
             "volatility": volatility,
             "rsi": round(last["rsi_14"], 2),
@@ -139,6 +157,10 @@ class CryptoTechnicalAnalysisBybit:
             "macd_hist": round(last["macd_hist"], 6),
             "support": round(last["close"] - (2 * last["atr_14"]), 2),
             "resistance": round(last["close"] + (2 * last["atr_14"]), 2),
+            "breakout": {
+                "long": bool(breakout_long),
+                "short": bool(breakout_short),
+            },
             "structure_break": {
                 "long": bool(swing_high and last["close"] > swing_high),
                 "short": bool(swing_low and last["close"] < swing_low),
@@ -163,8 +185,11 @@ class CryptoTechnicalAnalysisBybit:
             "details": {
                 "ema_20": round(last["ema_20"], 2),
                 "ema_50": round(last["ema_50"], 2),
+                "ema_200": round(last["ema_200"], 2),
                 "rsi_7": round(last["rsi_7"], 2),
                 "atr": round(last["atr_14"], 2),
-                "pivot_pp": round(pp["pp"], 2)
+                "pivot_pp": round(pp["pp"], 2),
+                "volume_avg_20": round(avg_volume, 2) if pd.notna(avg_volume) else None,
+                "volume_ratio": round(volume_ratio, 2) if volume_ratio else 0,
             }
         }

@@ -1141,14 +1141,17 @@ with tab3:
     if hist:
         df_hist = pd.DataFrame(hist)
         
-        # Rimuovi colonne non necessarie per la visualizzazione
-        display_cols = ['Symbol', 'Side', 'Closed PnL', 'Exit Time']
+        # Rimuovi colonne non necessarie per la visualizzazione e includi PnL %
+        display_cols = ['Symbol', 'Side', 'Closed PnL', 'PnL %', 'Exit Time']
+        if 'exec_fee' in df_hist.columns:
+            display_cols.insert(4, 'Fee')
+            df_hist = df_hist.rename(columns={'exec_fee': 'Fee'})
         
-        available_cols = [col for col in display_cols if col in df_hist.columns]
+        available_cols = [col for col in display_cols if col in df_hist.columns or col == 'Fee']
         if not available_cols:
             st.markdown('<div class="info-box">ℹ️ Nessun dato disponibile per lo storico.</div>', unsafe_allow_html=True)
         else:
-            df_display = df_hist[available_cols]
+            df_display = df_hist[[col for col in available_cols if col in df_hist.columns]]
 
             st.dataframe(
                 df_display,
@@ -1156,6 +1159,8 @@ with tab3:
                 hide_index=True,
                 column_config={
                     "Closed PnL": st.column_config.NumberColumn(format="$%.2f"),
+                    "PnL %": st.column_config.NumberColumn(format="%.2f%%"),
+                    "Fee": st.column_config.NumberColumn(format="$%.4f"),
                 }
             )
     else:
