@@ -18,7 +18,7 @@ RETRY_DELAY = 2  # seconds
 AI_DECISIONS_FILE = "/data/ai_decisions.json"
 BYBIT_TICKERS_URL = "https://api.bybit.com/v5/market/tickers"
 USE_TRENDING = os.getenv("USE_TRENDING_SYMBOLS", "true").lower() == "true"
-TRENDING_LIMIT = int(os.getenv("TRENDING_SYMBOLS_LIMIT", "6"))
+TRENDING_LIMIT = int(os.getenv("TRENDING_SYMBOLS_LIMIT", "10"))
 
 def save_monitoring_decision(positions_count: int, max_positions: int, positions_details: list, reason: str):
     """Salva la decisione di monitoraggio per la dashboard"""
@@ -295,6 +295,7 @@ async def analysis_cycle():
                 return
 
             # 6. EXECUTION
+            remaining_slots = max(0, MAX_POSITIONS - len(active_symbols))
             for d in decisions_list:
                 sym = d['symbol']
                 action = d['action']
@@ -304,14 +305,20 @@ async def analysis_cycle():
                     continue
 
                 if action in ["OPEN_LONG", "OPEN_SHORT"]:
+                    if remaining_slots <= 0:
+                        print(f"        ⏳ Skip {action} su {sym}: raggiunto limite {MAX_POSITIONS} posizioni aperte")
+                        continue
+
                     print(f"        🔥 EXECUTING {action} on {sym}...")
                     res = await c.post(f"{URLS['pos']}/open_position", json={
                         "symbol": sym,
                         "side": action,
                         "leverage": d.get('leverage', 5),
-                        "size_pct": d.get('size_pct', 0.15)
+                        "size_pct": d.get('size_pct', 0.15),
+                        "score": d.get('score')
                     })
                     print(f"        ✅ Result: {res.json()}")
+                    remaining_slots -= 1
 
         except Exception as e: 
             print(f"        ❌ AI/Exec Error: {e}")
