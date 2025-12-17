@@ -106,6 +106,12 @@ class CryptoTechnicalAnalysisBybit:
         trend_15m = trend
 
         atr_value = last["atr_14"]
+        if pd.isna(atr_value) or atr_value <= 0:
+            fallback_range = (df["high"] - df["low"]).rolling(window=14).mean().iloc[-1]
+            if not pd.isna(fallback_range) and fallback_range > 0:
+                atr_value = fallback_range
+            else:
+                atr_value = abs(last["close"]) * 0.001  # piccolo epsilon per evitare 0
         distance_from_ema50 = abs(last["close"] - last["ema_50"])
         volatility_ratio = (atr_value / last["close"]) if last["close"] else 0
         volatility = "high" if volatility_ratio > 0.02 else "low" if volatility_ratio < 0.01 else "normal"
@@ -155,8 +161,8 @@ class CryptoTechnicalAnalysisBybit:
             "rsi_7": round(last["rsi_7"], 2),
             "macd": macd_trend,
             "macd_hist": round(last["macd_hist"], 6),
-            "support": round(last["close"] - (2 * last["atr_14"]), 2),
-            "resistance": round(last["close"] + (2 * last["atr_14"]), 2),
+            "support": round(last["close"] - (2 * atr_value), 2),
+            "resistance": round(last["close"] + (2 * atr_value), 2),
             "breakout": {
                 "long": bool(breakout_long),
                 "short": bool(breakout_short),
@@ -187,7 +193,7 @@ class CryptoTechnicalAnalysisBybit:
                 "ema_50": round(last["ema_50"], 2),
                 "ema_200": round(last["ema_200"], 2),
                 "rsi_7": round(last["rsi_7"], 2),
-                "atr": round(last["atr_14"], 2),
+                "atr": round(atr_value, 2),
                 "pivot_pp": round(pp["pp"], 2),
                 "volume_avg_20": round(avg_volume, 2) if pd.notna(avg_volume) else None,
                 "volume_ratio": round(volume_ratio, 2) if volume_ratio else 0,
