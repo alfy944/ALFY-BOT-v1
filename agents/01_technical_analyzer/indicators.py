@@ -79,6 +79,7 @@ class CryptoTechnicalAnalysisBybit:
         df["macd_line"] = macd_line
         df["macd_signal"] = macd_sig
         df["macd_hist"] = macd_diff
+        df["macd_hist_prev"] = df["macd_hist"].shift(1)
         df["rsi_7"] = self.calculate_rsi(df["close"], 7)
         df["rsi_14"] = self.calculate_rsi(df["close"], 14)
         df["atr_14"] = self.calculate_atr(df["high"], df["low"], df["close"], 14)
@@ -163,6 +164,7 @@ class CryptoTechnicalAnalysisBybit:
             "rsi_7": round(last["rsi_7"], 2),
             "macd": macd_trend,
             "macd_hist": round(last["macd_hist"], 6),
+            "macd_hist_prev": round(prev["macd_hist"], 6),
             "support": round(last["close"] - (2 * atr_value), 2),
             "resistance": round(last["close"] + (2 * atr_value), 2),
             "breakout": {

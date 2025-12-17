@@ -36,9 +36,9 @@ DEFAULT_PARAMS = {
     "atr_multiplier_sl": 2.0,
     "atr_multiplier_tp": 3.0,
     "min_rsi_for_long": 40,
-    "max_rsi_for_short": 55,
-    "min_score_trade": 0.58,
-    "trend_score_threshold": 0.58,
+    "max_rsi_for_short": 50,
+    "min_score_trade": 0.56,
+    "trend_score_threshold": 0.56,
     "range_score_threshold": 0.55,
     "countertrend_score_threshold": 0.7,
     "atr_sl_factor": 1.2,
@@ -411,8 +411,8 @@ PARAMETRI OTTIMIZZATI (dall'evoluzione automatica):
 - Size per trade: {params.get('size_pct', 0.15)*100:.0f}% del wallet
 - Soglia reverse: {params.get('reverse_threshold', 2.0)}%
 - Min RSI per long: {params.get('min_rsi_for_long', 40)}
-- Max RSI per short: {params.get('max_rsi_for_short', 55)}
-- Score minimi: trend {params.get('trend_score_threshold', 0.58)} | range {params.get('range_score_threshold', 0.55)} | counter-trend {params.get('countertrend_score_threshold', 0.7)}
+    - Max RSI per short: {params.get('max_rsi_for_short', 50)}
+    - Score minimi: trend {params.get('trend_score_threshold', 0.56)} | range {params.get('range_score_threshold', 0.55)} | counter-trend {params.get('countertrend_score_threshold', 0.7)}
 - ATR SL factor: {params.get('atr_sl_factor', 1.2)} | trailing ATR: {params.get('trailing_atr_factor', 1.0)} | breakeven R: {params.get('breakeven_R', 1.0)}
 - Reverse abilitato: {params.get('reverse_enabled', True)} | Max daily trades: {params.get('max_daily_trades', 3)} | Max posizioni aperte: {params.get('max_open_positions', 3)}
 
@@ -514,6 +514,17 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             ):
                 d['action'] = 'HOLD'
                 rationale_suffix.append('macd_positive_strong')
+            # Momentum improvement: allow negative MACD if improving or small magnitude
+            macd_prev = tech.get("macd_hist_prev")
+            if (
+                is_open_action(d.get('action', ''))
+                and macd_hist is not None
+                and atr_val
+            ):
+                improving = macd_prev is not None and macd_hist > macd_prev
+                small_mag = abs(macd_hist) < (0.25 * atr_val)
+                if improving or small_mag:
+                    rationale_suffix = [r for r in rationale_suffix if r != 'macd_positive_strong']
 
             # Breakout requirement
             breakout = tech.get("breakout") or {}
@@ -576,13 +587,13 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                     d['action'] = 'HOLD'
                     rationale_suffix.append('transition_guard')
 
-            # RSI window for trend-bear shorts
+            # RSI windows (more permissive dead-zone handling)
             rsi_val = tech.get("rsi") or tech.get("rsi_7") or 0
             if (
                 is_open_action(d.get('action', ''))
                 and d.get('action') == "OPEN_SHORT"
                 and (trend_1h == "BEARISH" or trend_15m == "BEARISH")
-                and rsi_val < params.get("max_rsi_for_short", 55)
+                and rsi_val < params.get("max_rsi_for_short", 50)
             ):
                 d['action'] = 'HOLD'
                 rationale_suffix.append('rsi_too_low_for_short')
@@ -612,7 +623,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             if is_open_action(d.get('action', '')) and d.get('action') == "OPEN_LONG" and price and ema20 and atr_val:
                 near_ema = abs(price - ema20) <= atr_val
                 rsi_val = tech.get("rsi") or tech.get("rsi_7") or 0
-                if not (trend_15m == "BULLISH" and near_ema and rsi_val > 45):
+                if not (trend_15m == "BULLISH" and near_ema and rsi_val > 38):
                     rationale_suffix.append('pullback_filter_fail')
                     d['action'] = 'HOLD'
 
@@ -625,7 +636,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 and price
                 and ema20
                 and price < ema20  # sotto EMA20/50 area
-                and 45 <= (tech.get("rsi") or tech.get("rsi_7") or 0) <= 55
+                and 38 <= (tech.get("rsi") or tech.get("rsi_7") or 0) <= 50
                 and not (breakout_long is True)  # nessun breakout contrario
                 and (score_val or 0) >= params.get("trend_score_threshold", 0.58)
             ):
