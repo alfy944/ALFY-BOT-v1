@@ -41,6 +41,7 @@ FALLBACK_TRAILING_PCT = float(os.getenv("FALLBACK_TRAILING_PCT", "0.025"))  # 2.
 DEFAULT_INITIAL_SL_PCT = float(os.getenv("DEFAULT_INITIAL_SL_PCT", "0.04"))  # 4%
 # --- BREAK-EVEN BUFFER ---
 BE_MIN_R = float(os.getenv("BE_MIN_R", "0.1"))  # require at least 0.1R before BE triggers
+BE_FEE_BUFFER_PCT = float(os.getenv("BE_FEE_BUFFER_PCT", "0.0008"))  # offset BE to cover taker+slippage
 # --- TIME-BASED EXIT ---
 TIME_EXIT_BARS = int(os.getenv("TIME_EXIT_BARS", "14"))
 TIME_EXIT_INTERVAL_MIN = int(os.getenv("TIME_EXIT_INTERVAL_MIN", "15"))
@@ -487,6 +488,7 @@ def check_and_update_trailing_stops():
 
             new_sl_price = None
             profit_distance = (mark_price - entry_price) if side_dir == "long" else (entry_price - mark_price)
+            fee_buffer_abs = entry_price * BE_FEE_BUFFER_PCT
             r_multiple = profit_distance / risk_distance if risk_distance > 0 else 0.0
             sl_at_be = (side_dir == "long" and sl_current >= entry_price) or (side_dir == "short" and sl_current <= entry_price)
 
@@ -527,18 +529,19 @@ def check_and_update_trailing_stops():
                 side_dir == "short" and mark_price <= entry_price
             )
             be_conditions = []
-            profitable_enough = risk_distance > 0 and r_multiple >= BE_MIN_R
+            min_profit_for_be = max(risk_distance * BE_MIN_R if risk_distance > 0 else 0.0, fee_buffer_abs)
+            profitable_enough = (risk_distance > 0) and (profit_distance >= min_profit_for_be)
             if in_profit and profitable_enough and ema_50 > 0:
                 be_conditions.append((side_dir == "long" and mark_price > ema_50) or (side_dir == "short" and mark_price < ema_50))
             if in_profit and profitable_enough and structure_break:
                 be_conditions.append(bool(structure_break.get(side_dir)))
             if in_profit and profitable_enough and volume_spike:
                 be_conditions.append((side_dir == "long" and mark_price > entry_price) or (side_dir == "short" and mark_price < entry_price))
-            if risk_distance > 0:
+            if risk_distance > 0 and in_profit:
                 be_conditions.append(profit_distance >= risk_distance)
 
             if in_profit and any(be_conditions):
-                target_be = entry_price
+                target_be = entry_price + fee_buffer_abs if side_dir == "long" else entry_price - fee_buffer_abs
                 if side_dir == "long":
                     if sl_current == 0.0 or target_be > sl_current:
                         new_sl_price = target_be
