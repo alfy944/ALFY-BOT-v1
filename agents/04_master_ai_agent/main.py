@@ -31,7 +31,7 @@ DEFAULT_PARAMS = {
     "rsi_overbought": 70,
     "rsi_oversold": 30,
     "default_leverage": 5,
-    "size_pct": 0.15,
+    "size_pct": 0.20,
     "reverse_threshold": 1.2,
     "atr_multiplier_sl": 2.0,
     "atr_multiplier_tp": 3.0,
@@ -66,6 +66,7 @@ API_COSTS_FILE = "/data/api_costs.json"
 AI_DECISIONS_FILE = "/data/ai_decisions.json"
 MASTER_STATE_FILE = "/data/master_state.json"
 MIN_SYMBOL_COOLDOWN_MINUTES = 15
+FIXED_SIZE_PCT = 0.20
 
 
 def log_api_call(tokens_in: int, tokens_out: int):
@@ -519,6 +520,8 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             if computed_score is not None:
                 score_val = computed_score
                 d['score'] = computed_score
+            if is_open_action(d.get('action', '')):
+                d['size_pct'] = FIXED_SIZE_PCT
             # Detect textual intent even if the action is HOLD
             analysis_text = decision_json.get('analysis_summary', '') or ''
             text_block = f"{d.get('rationale','')} {analysis_text}"
@@ -543,19 +546,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             rsi_extreme_long = rsi_val < 35
             rsi_extreme_short = rsi_val > 65
 
-            # Dynamic sizing by score
-            if is_open_action(d.get('action', '')) and score_val is not None:
-                try:
-                    s = float(score_val)
-                    if s < 0.70:
-                        d['size_pct'] = 0.05
-                    elif s < 0.80:
-                        d['size_pct'] = 0.10
-                    else:
-                        d['size_pct'] = 0.15
-                    d['score'] = s
-                except Exception:
-                    pass
+            # Dynamic sizing disabilitata: usa size fissa
 
             # Multi-timeframe confirmation (15m vs 1h)
             trend_15m = (tech.get("trend_15m") or "").upper()
@@ -815,8 +806,8 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 conditions_true += 1
             if price and ema20 and atr_val and abs(price - ema20) <= atr_val:
                 conditions_true += 1
-            if trend_pullback_short:
-                conditions_true = max(conditions_true, 3)
+                if trend_pullback_short:
+                    conditions_true = max(conditions_true, 3)
 
             if is_open_action(d.get('action', '')):
                 if (score_val or 0) < params.get("min_score_trade", 0.35):
@@ -907,11 +898,11 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             if open_intents:
                 intended = open_intents[-1].get('text_intent') or initial_action
                 open_intents[-1]['hard_block'] = hard_block or not is_open_action(intended)
-            if initial_action in ("OPEN_LONG", "OPEN_SHORT") and d.get('action') == 'HOLD' and not hard_block:
-                d['action'] = initial_action
-                d['size_pct'] = d.get('size_pct', 0.05) * 0.5
-                d['hold_quality'] = None
-                rationale_suffix.append('force_open_from_ai')
+                if initial_action in ("OPEN_LONG", "OPEN_SHORT") and d.get('action') == 'HOLD' and not hard_block:
+                    d['action'] = initial_action
+                    d['size_pct'] = FIXED_SIZE_PCT
+                    d['hold_quality'] = None
+                    rationale_suffix.append('force_open_from_ai')
 
             # Disable lists
             if symbol_key in [s.upper() for s in controls.get('disable_symbols', [])]:
@@ -1028,28 +1019,29 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                         fb_data['rationale'] = (fb_data.get('rationale') or '').strip() + " | fallback_from_analysis_intent"
                         fb_score = best_intent.get('score') or fb_data.get('score') or params.get('min_score_trade', 0.35)
                         # Enforce minimum score threshold to avoid low-quality forced opens
-                        if fb_score < params.get('min_score_trade', 0.35):
-                            logger.info("⚠️ Fallback scartato: score sotto il minimo")
-                        else:
-                            fb_data['score'] = fb_score
+                if fb_score < params.get('min_score_trade', 0.35):
+                    logger.info("⚠️ Fallback scartato: score sotto il minimo")
+                else:
+                    fb_data['score'] = fb_score
+                    fb_data['size_pct'] = FIXED_SIZE_PCT
 
-                            try:
-                                fb_decision = Decision(**fb_data)
-                                open_hour_count += 1
-                                open_day_count += 1
-                                symbol_cooldowns[best_intent.get('symbol')] = now_ts
-                                valid_decisions.append(fb_decision)
-                                save_ai_decision({
-                                    'symbol': fb_decision.symbol,
-                                    'action': fb_decision.action,
-                                    'leverage': fb_decision.leverage,
-                                    'size_pct': fb_decision.size_pct,
-                                    'rationale': fb_decision.rationale,
-                                    'analysis_summary': decision_json.get("analysis_summary", "")
-                                })
-                                logger.info(f"✅ Fallback aperto da intento originale: {fb_decision.symbol} {fb_decision.action}")
-                            except Exception as e:
-                                logger.warning(f"Fallback intent invalid: {e}")
+                    try:
+                        fb_decision = Decision(**fb_data)
+                        open_hour_count += 1
+                        open_day_count += 1
+                        symbol_cooldowns[best_intent.get('symbol')] = now_ts
+                        valid_decisions.append(fb_decision)
+                        save_ai_decision({
+                            'symbol': fb_decision.symbol,
+                            'action': fb_decision.action,
+                            'leverage': fb_decision.leverage,
+                            'size_pct': fb_decision.size_pct,
+                            'rationale': fb_decision.rationale,
+                            'analysis_summary': decision_json.get("analysis_summary", "")
+                        })
+                        logger.info(f"✅ Fallback aperto da intento originale: {fb_decision.symbol} {fb_decision.action}")
+                    except Exception as e:
+                        logger.warning(f"Fallback intent invalid: {e}")
 
         # Persist updated cooldowns
         state['symbol_cooldowns'] = symbol_cooldowns
