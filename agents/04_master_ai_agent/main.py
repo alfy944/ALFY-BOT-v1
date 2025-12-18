@@ -331,12 +331,11 @@ LINEE GUIDA CHIAVE:
 - Se esistono posizioni aperte valuta la coerenza prima di aprire nuove operazioni.
 - Non superare mai 3 posizioni aperte contemporaneamente: se ci sono già 3 trade aperti, apri solo se prima chiudi qualcosa o resta in HOLD.
 - Usa leva e size in base alla qualità del setup (non default fissi).
-- Usa RSI come conferma del setup, non come vincolo assoluto: in trend guarda i pullback (long 40–55, short 45–60), in range usa valori estremi (long <35, short >65).
-- Regole per regime: trend = trend-following; range = mean reversion con RSI + supporti/resistenze; transition = mercato che parte → trade ammessi con size ridotta (≈50% della size normale), NON hold automatico.
-- Aggiungi counter-trend scalp in trend bearish: RSI <25, prezzo distante ≥1.5 ATR da EMA20, prima candela di rifiuto, size 25–30%, TP corto, vietato pyramiding.
-- Score minimi per tipo: trend ≥0.60, range ≥0.55, counter-trend ≥0.70 (size ridotta) — non usare soglia unica.
-- Logica LONG e SHORT separate: short in trend può partire con RSI 50–55, long in trend può partire con RSI 45–50. Non attendere sempre 30/70.
-- Pesa i segnali con priorità esplicite: trend TF alto = driver (50%, priorità alta), momentum/MACD = conferma (30%, non veto), RSI = timing (20%). Se trend domina consenti il trade; se momentum domina riduci size ma non bloccare; HOLD solo con segnali tutti contrari.
+- RSI è permissivo: LONG fino a RSI <55, SHORT da RSI >45; se RSI è estremo (LONG <35, SHORT >65) puoi ignorare il trend per counter-trend.
+- Regime range non è un veto: riduci lo score (≈0.8x) e la size, non bloccare il trade.
+- MACD è peso leggero: contrario = -0.1 sullo score, favorevole = +0.1; niente veto diretto.
+- Score minimi (path-based): trend ≥0.35, transition ≥0.35, counter-trend ≥0.70.
+- Pesa i segnali con priorità esplicite: trend TF alto = driver (50%), momentum/MACD = conferma (30%), RSI = timing (20%). Se trend domina consenti il trade; se momentum domina riduci size ma non bloccare; HOLD solo con segnali tutti contrari.
 - Ogni HOLD deve spiegare rejected_by = (RSI | regime | score | momentum | risk_control) nel rationale per rendere l’azione chiara.
 - Gestione SL/TP per evitare chiusure premature: stop basato su ATR (usa atr_sl_factor rispetto all’ATR e oltre l’ultimo swing, non sotto il rumore), TP minimo 2R–3R coerente con atr_multiplier_tp; quando il prezzo raggiunge almeno 1R (breakeven_R) porta lo SL a breakeven e poi trail con trailing_atr_factor. Non chiudere anticipatamente senza un motivo contrario forte.
 - No scalping: entra solo se il potenziale movimento offre spazio (≥1–1.5 ATR fino al primo target) e R/R atteso ≥2 al netto delle commissioni; evita TP ravvicinati o trade che coprono a malapena le fee. Non stringere gli stop in anticipo: porta a breakeven solo dopo 1R pieno, attiva il trailing oltre ~1.2–1.5R, e mantieni la posizione finché non scatta SL/TP o emergono segnali contrari forti.
@@ -525,25 +524,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             macd_hist = tech.get("macd_hist")
             macd_prev = tech.get("macd_hist_prev")
             macd_prev2 = tech.get("macd_hist_prev2")
-            if (
-                is_open_action(d.get('action', ''))
-                and d.get('action') == "OPEN_SHORT"
-                and macd_hist is not None
-                and atr_val
-                and macd_hist > atr_val * 0.25
-            ):
-                d['size_pct'] = d.get('size_pct', 0.1) * 0.7
-                rationale_suffix.append('macd_positive_soft')
-            # MACD veto only on strong opposite momentum
-            if (
-                is_open_action(d.get('action', ''))
-                and d.get('action') == "OPEN_LONG"
-                and macd_hist is not None
-                and atr_val
-                and macd_hist < -0.25 * atr_val
-            ):
-                d['size_pct'] = d.get('size_pct', 0.1) * 0.7
-                rationale_suffix.append('macd_negative_soft')
+            # MACD soft influence (no veto)
             # Momentum improvement: allow negative MACD if improving or small magnitude
             macd_prev = tech.get("macd_hist_prev")
             if (
