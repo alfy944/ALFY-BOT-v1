@@ -259,6 +259,26 @@ def clamp(val: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, val))
 
 
+def infer_open_action_from_text(text: str) -> Optional[str]:
+    """Infer OPEN_LONG/OPEN_SHORT intent from a natural-language rationale.
+
+    Looks for clear keywords; returns None if no intent is detected.
+    """
+    if not text:
+        return None
+    txt = text.lower()
+    # prefer explicit short markers over generic "open" mentions
+    if "short" in txt or "aprire uno short" in txt or "aprire uno short" in txt:
+        return "OPEN_SHORT"
+    if "long" in txt or "aprire un long" in txt or "aprire una posizione long" in txt:
+        return "OPEN_LONG"
+    if "open short" in txt:
+        return "OPEN_SHORT"
+    if "open long" in txt:
+        return "OPEN_LONG"
+    return None
+
+
 def count_recent_actions(decisions: list, minutes: int, action_filter=None) -> int:
     cutoff = datetime.utcnow().timestamp() - minutes * 60
     count = 0
@@ -475,9 +495,12 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             if computed_score is not None:
                 score_val = computed_score
                 d['score'] = computed_score
+            # Detect textual intent even if the action is HOLD
+            text_intent = infer_open_action_from_text(f"{d.get('rationale','')} {decision_json.get('analysis_summary','')}")
             open_intents.append({
                 'symbol': symbol_key,
                 'initial_action': initial_action,
+                'text_intent': text_intent,
                 'raw': d.copy(),
                 'score': score_val,
                 'hard_block': False,
@@ -853,7 +876,8 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 for r in rationale_suffix
             )
             if open_intents:
-                open_intents[-1]['hard_block'] = hard_block or not is_open_action(initial_action)
+                intended = open_intents[-1].get('text_intent') or initial_action
+                open_intents[-1]['hard_block'] = hard_block or not is_open_action(intended)
             if initial_action in ("OPEN_LONG", "OPEN_SHORT") and d.get('action') == 'HOLD' and not hard_block:
                 d['action'] = initial_action
                 d['size_pct'] = d.get('size_pct', 0.05) * 0.5
@@ -932,11 +956,16 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
         # prova a recuperare l'intento più forte (esclude blocchi hard come cooldown o limiti rischio)
         open_valid = [dec for dec in valid_decisions if is_open_action(dec.action)]
         if not open_valid:
-            fallback_candidates = [i for i in open_intents if is_open_action(i.get('initial_action', '')) and not i.get('hard_block')]
+            fallback_candidates = [
+                i for i in open_intents
+                if (is_open_action(i.get('initial_action', '')) or is_open_action(i.get('text_intent') or ''))
+                and not i.get('hard_block')
+            ]
             if fallback_candidates:
                 best_intent = max(fallback_candidates, key=lambda x: x.get('score') or 0)
                 fb_data = best_intent.get('raw', {}).copy()
-                fb_data['action'] = best_intent.get('initial_action')
+                fb_action = best_intent.get('initial_action') if is_open_action(best_intent.get('initial_action', '')) else best_intent.get('text_intent')
+                fb_data['action'] = fb_action
                 fb_data.setdefault('leverage', params.get('default_leverage', 5))
                 fb_data.setdefault('size_pct', params.get('size_pct', 0.15))
                 fb_data['hold_quality'] = None
