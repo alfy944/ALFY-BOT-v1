@@ -291,6 +291,18 @@ def infer_open_action_from_text(text: str) -> Optional[str]:
     return None
 
 
+def infer_open_action_for_symbol(text: str, symbol: str) -> Optional[str]:
+    """Try to detect an open intent that references a specific symbol in free text."""
+    if not text or not symbol:
+        return None
+    sym = symbol.lower()
+    base = sym.replace("usdt", "") if "usdt" in sym else sym
+    txt = text.lower()
+    if sym in txt or base in txt:
+        return infer_open_action_from_text(text)
+    return None
+
+
 def count_recent_actions(decisions: list, minutes: int, action_filter=None) -> int:
     cutoff = datetime.utcnow().timestamp() - minutes * 60
     count = 0
@@ -508,11 +520,15 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 score_val = computed_score
                 d['score'] = computed_score
             # Detect textual intent even if the action is HOLD
-            text_intent = infer_open_action_from_text(f"{d.get('rationale','')} {decision_json.get('analysis_summary','')}")
+            analysis_text = decision_json.get('analysis_summary', '') or ''
+            text_block = f"{d.get('rationale','')} {analysis_text}"
+            text_intent = infer_open_action_from_text(text_block)
+            analysis_intent = infer_open_action_for_symbol(analysis_text, symbol_key)
             open_intents.append({
                 'symbol': symbol_key,
                 'initial_action': initial_action,
                 'text_intent': text_intent,
+                'analysis_intent': analysis_intent,
                 'raw': d.copy(),
                 'score': score_val,
                 'hard_block': False,
@@ -970,13 +986,27 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
         if not open_valid:
             fallback_candidates = [
                 i for i in open_intents
-                if (is_open_action(i.get('initial_action', '')) or is_open_action(i.get('text_intent') or ''))
-                and not i.get('hard_block')
+                if (
+                    is_open_action(i.get('initial_action', ''))
+                    or is_open_action(i.get('text_intent') or '')
+                    or is_open_action(i.get('analysis_intent') or '')
+                ) and (
+                    not i.get('hard_block')
+                    or is_open_action(i.get('analysis_intent') or '')
+                )
             ]
             if fallback_candidates:
                 best_intent = max(fallback_candidates, key=lambda x: x.get('score') or 0)
                 fb_data = best_intent.get('raw', {}).copy()
-                fb_action = best_intent.get('initial_action') if is_open_action(best_intent.get('initial_action', '')) else best_intent.get('text_intent')
+                fb_action = None
+                for cand in (
+                    best_intent.get('initial_action'),
+                    best_intent.get('analysis_intent'),
+                    best_intent.get('text_intent'),
+                ):
+                    if is_open_action(cand or ''):
+                        fb_action = cand
+                        break
                 if not is_open_action(fb_action or ''):
                     logger.info("⚠️ Fallback intent scartato: nessuna azione OPEN valida rilevata")
                 else:
