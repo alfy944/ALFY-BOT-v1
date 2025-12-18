@@ -32,14 +32,15 @@ DEFAULT_PARAMS = {
     "rsi_oversold": 30,
     "default_leverage": 5,
     "size_pct": 0.15,
-    "reverse_threshold": 2.0,
+    "reverse_threshold": 1.2,
     "atr_multiplier_sl": 2.0,
     "atr_multiplier_tp": 3.0,
     "min_rsi_for_long": 40,
     "max_rsi_for_short": 50,
-    "min_score_trade": 0.56,
-    "trend_score_threshold": 0.56,
+    "min_score_trade": 0.35,
+    "trend_score_threshold": 0.35,
     "range_score_threshold": 0.55,
+    "transition_score_threshold": 0.35,
     "countertrend_score_threshold": 0.7,
     "atr_sl_factor": 1.2,
     "trailing_atr_factor": 1.0,
@@ -64,7 +65,7 @@ EVOLVED_PARAMS_FILE = "/data/evolved_params.json"
 API_COSTS_FILE = "/data/api_costs.json"
 AI_DECISIONS_FILE = "/data/ai_decisions.json"
 MASTER_STATE_FILE = "/data/master_state.json"
-MIN_SYMBOL_COOLDOWN_MINUTES = 45
+MIN_SYMBOL_COOLDOWN_MINUTES = 15
 
 
 def log_api_call(tokens_in: int, tokens_out: int):
@@ -393,6 +394,13 @@ def decide_batch(payload: AnalysisPayload):
                 "volume_ratio": (t.get('details') or {}).get('volume_ratio'),
                 "volume_avg_20": (t.get('details') or {}).get('volume_avg_20'),
                 "rsi": t.get('rsi'),
+                "structure_break": t.get('structure_break') or {},
+                "high_20": t.get('high_20'),
+                "low_20": t.get('low_20'),
+                "last_high_15m": t.get("last_high_15m"),
+                "last_low_15m": t.get("last_low_15m"),
+                "macd_hist_prev": t.get("macd_hist_prev"),
+                "macd_hist_prev2": t.get("macd_hist_prev2"),
             }
             
         prompt_data = {
@@ -409,10 +417,10 @@ PARAMETRI OTTIMIZZATI (dall'evoluzione automatica):
 - RSI Oversold (per long): {params.get('rsi_oversold', 30)}
 - Leverage suggerito: {params.get('default_leverage', 5)}x
 - Size per trade: {params.get('size_pct', 0.15)*100:.0f}% del wallet
-- Soglia reverse: {params.get('reverse_threshold', 2.0)}%
+- Soglia reverse: {params.get('reverse_threshold', 1.2)}%
 - Min RSI per long: {params.get('min_rsi_for_long', 40)}
     - Max RSI per short: {params.get('max_rsi_for_short', 50)}
-    - Score minimi: trend {params.get('trend_score_threshold', 0.56)} | range {params.get('range_score_threshold', 0.55)} | counter-trend {params.get('countertrend_score_threshold', 0.7)}
+    - Score minimi: trend {params.get('trend_score_threshold', 0.35)} | range {params.get('range_score_threshold', 0.55)} | counter-trend {params.get('countertrend_score_threshold', 0.7)}
 - ATR SL factor: {params.get('atr_sl_factor', 1.2)} | trailing ATR: {params.get('trailing_atr_factor', 1.0)} | breakeven R: {params.get('breakeven_R', 1.0)}
 - Reverse abilitato: {params.get('reverse_enabled', True)} | Max daily trades: {params.get('max_daily_trades', 3)} | Max posizioni aperte: {params.get('max_open_positions', 3)}
 
@@ -472,6 +480,9 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             ema20 = tech.get("ema_20")
             atr_val = tech.get("atr")
             structure_break = tech.get("structure_break") or {}
+            rsi_val = tech.get("rsi") or tech.get("rsi_7") or 0
+            rsi_extreme_long = rsi_val < 35
+            rsi_extreme_short = rsi_val > 65
 
             # Dynamic sizing by score
             if is_open_action(d.get('action', '')) and score_val is not None:
@@ -493,15 +504,22 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             price = tech.get("price")
             ema20 = tech.get("ema_20")
             atr_val = tech.get("atr")
-            if is_open_action(d.get('action', '')) and trend_15m and trend_1h and trend_15m != trend_1h:
+            if (
+                is_open_action(d.get('action', ''))
+                and trend_15m
+                and trend_1h
+                and trend_15m != trend_1h
+                and not rsi_extreme_long
+                and not rsi_extreme_short
+            ):
                 d['action'] = 'HOLD'
                 rationale_suffix.append('mtf_trend_mismatch')
 
             # Volume filter
             vol_ratio = tech.get("volume_ratio")
             if is_open_action(d.get('action', '')) and vol_ratio is not None and vol_ratio < 1.3:
-                d['action'] = 'HOLD'
-                rationale_suffix.append('low_volume')
+                d['size_pct'] = d.get('size_pct', 0.1) * 0.7
+                rationale_suffix.append('low_volume_soft')
 
             # MACD momentum filter (only strong positive blocks shorts)
             macd_hist = tech.get("macd_hist")
@@ -554,6 +572,11 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
 
             # Transition regime gating
             regime_val = (tech.get("regime") or "").lower()
+            if score_val is not None and regime_val == "range":
+                score_val *= 0.8
+                d['score'] = score_val
+                if is_open_action(d.get('action', '')):
+                    d['size_pct'] = d.get('size_pct', 0.1) * 0.7
             if (
                 is_open_action(d.get('action', ''))
                 and regime_val == "transition"
@@ -568,7 +591,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                     and high_20 is not None
                     and price is not None
                     and price > high_20
-                    and (score_val or 0) >= 0.58
+                    and (score_val or 0) >= params.get("transition_score_threshold", 0.35)
                 ):
                     allow_transition = True
                 if (
@@ -580,14 +603,14 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                     and low_20 is not None
                     and price is not None
                     and price < low_20
-                    and (score_val or 0) >= 0.58
+                    and (score_val or 0) >= params.get("transition_score_threshold", 0.35)
                 ):
                     allow_transition = True
 
                 if not (
                     allow_transition
                     or (
-                        (score_val or 0) >= 0.58
+                        (score_val or 0) >= params.get("transition_score_threshold", 0.35)
                         and vol_ratio is not None
                         and vol_ratio >= 1.3
                         and (
@@ -679,7 +702,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                     or (low_20 is not None and price < low_20)
                 )
                 and ((vol_ratio is not None and vol_ratio >= 1.2) or breakout_short)
-                and (score_val or 0) >= 0.58
+                and (score_val or 0) >= params.get("trend_score_threshold", 0.35)
             ):
                 bear_continuation_short = True
                 d['path'] = "bear_continuation_short"
@@ -712,6 +735,23 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
 
             macd_improving = macd_prev is not None and macd_hist is not None and macd_prev2 is not None and ((d.get('action') == "OPEN_LONG" and macd_hist > macd_prev > macd_prev2) or (d.get('action') == "OPEN_SHORT" and macd_hist < macd_prev < macd_prev2))
             macd_small = macd_hist is not None and atr_val and abs(macd_hist) < 0.25 * atr_val
+            if macd_hist is not None:
+                if d.get('action') == "OPEN_LONG":
+                    score_val = (score_val or 0) + (0.1 if macd_hist > 0 else -0.1)
+                elif d.get('action') == "OPEN_SHORT":
+                    score_val = (score_val or 0) + (0.1 if macd_hist < 0 else -0.1)
+            if is_open_action(d.get('action', '')):
+                if d.get('action') == "OPEN_LONG":
+                    if rsi_extreme_long:
+                        score_val = (score_val or 0) + 0.1
+                    elif rsi_val >= 55:
+                        score_val = (score_val or 0) - 0.1
+                elif d.get('action') == "OPEN_SHORT":
+                    if rsi_extreme_short:
+                        score_val = (score_val or 0) + 0.1
+                    elif rsi_val <= 45:
+                        score_val = (score_val or 0) - 0.1
+            d['score'] = score_val
 
             # Altcoin depends on BTC context
             if is_open_action(d.get('action', '')) and symbol_key not in ("BTC", "BTCUSDT"):
@@ -736,9 +776,27 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 conditions_true += 1
             if trend_pullback_short:
                 conditions_true = max(conditions_true, 3)
-            if is_open_action(d.get('action', '')) and conditions_true < 3:
-                d['action'] = 'HOLD'
-                rationale_suffix.append('quality_score_low')
+
+            if is_open_action(d.get('action', '')):
+                if (score_val or 0) < params.get("min_score_trade", 0.35):
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('score_below_min')
+                else:
+                    path_score_ok = False
+                    if counter_trend and (score_val or 0) >= params.get("countertrend_score_threshold", 0.7):
+                        path_score_ok = True
+                    elif regime_val == "transition" and (score_val or 0) >= params.get("transition_score_threshold", 0.35):
+                        path_score_ok = True
+                    elif rsi_extreme_long and d.get('action') == "OPEN_LONG":
+                        path_score_ok = True
+                    elif rsi_extreme_short and d.get('action') == "OPEN_SHORT":
+                        path_score_ok = True
+                    elif not counter_trend and (score_val or 0) >= params.get("trend_score_threshold", 0.35):
+                        path_score_ok = True
+
+                    if not path_score_ok or conditions_true < 1:
+                        d['action'] = 'HOLD'
+                        rationale_suffix.append('quality_score_low')
 
             # Hold quality flag
             if d.get('action') == 'HOLD':

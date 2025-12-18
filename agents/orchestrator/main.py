@@ -10,7 +10,7 @@ DEFAULT_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 
 # --- CONFIGURAZIONE OTTIMIZZAZIONE ---
 MAX_POSITIONS = 3  # Numero massimo posizioni contemporanee
-REVERSE_THRESHOLD = 2.0  # Percentuale perdita per trigger reverse analysis
+REVERSE_THRESHOLD = 1.2  # Percentuale perdita per trigger reverse analysis
 CYCLE_INTERVAL = 60  # Secondi tra ogni ciclo di controllo (era 900)
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # seconds
