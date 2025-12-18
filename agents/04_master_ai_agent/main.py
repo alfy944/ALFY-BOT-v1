@@ -896,6 +896,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 'max open positions reached',
                 'blocked by disable_symbols',
                 'blocked by regime filter',
+                'mtf_trend_mismatch',  # non forzare aperture con trend incoerenti
             }
             hard_block = any(
                 r in hard_tags
