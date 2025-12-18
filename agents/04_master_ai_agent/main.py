@@ -678,7 +678,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 and price < ema20  # sotto EMA20/50 area
                 and 35 <= (tech.get("rsi") or tech.get("rsi_7") or 0) <= 55
                 and ((tech.get("structure_break") or {}).get("short") or (last_low_15m and price < last_low_15m))
-                and (score_val or 0) >= params.get("trend_score_threshold", 0.56)
+                and (score_val or 0) >= params.get("trend_score_threshold", 0.35)
             ):
                 trend_pullback_short = True
                 d['path'] = "bear_pullback_short"
@@ -715,7 +715,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 is_open_action(d.get('action', ''))
                 and d.get('action') == "OPEN_LONG"
                 and regime_val == "trend_bear"
-                and (tech.get("rsi") or tech.get("rsi_7") or 0) < 30
+                and (tech.get("rsi") or tech.get("rsi_7") or 0) < 35
                 and price
                 and ema20
                 and atr_val
