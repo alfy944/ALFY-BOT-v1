@@ -464,6 +464,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
         open_positions_count = len(active_positions)
 
         valid_decisions = []
+        open_intents = []
         for d in decision_json.get("decisions", []):
             symbol_key = (d.get('symbol') or '').upper()
             initial_action = d.get('action')
@@ -474,6 +475,13 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             if computed_score is not None:
                 score_val = computed_score
                 d['score'] = computed_score
+            open_intents.append({
+                'symbol': symbol_key,
+                'initial_action': initial_action,
+                'raw': d.copy(),
+                'score': score_val,
+                'hard_block': False,
+            })
             trend_15m = (tech.get("trend_15m") or "").upper()
             trend_1h = (tech.get("trend_1h") or "").upper()
             price = tech.get("price")
@@ -844,6 +852,8 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 or r.startswith('transition_guard')
                 for r in rationale_suffix
             )
+            if open_intents:
+                open_intents[-1]['hard_block'] = hard_block or not is_open_action(initial_action)
             if initial_action in ("OPEN_LONG", "OPEN_SHORT") and d.get('action') == 'HOLD' and not hard_block:
                 d['action'] = initial_action
                 d['size_pct'] = d.get('size_pct', 0.05) * 0.5
@@ -917,6 +927,40 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 })
             except Exception as e:
                 logger.warning(f"Invalid decision: {e}")
+
+        # Se l'LLM ha dichiarato un'azione di apertura ma dopo i filtri non ci sono OPEN,
+        # prova a recuperare l'intento più forte (esclude blocchi hard come cooldown o limiti rischio)
+        open_valid = [dec for dec in valid_decisions if is_open_action(dec.action)]
+        if not open_valid:
+            fallback_candidates = [i for i in open_intents if is_open_action(i.get('initial_action', '')) and not i.get('hard_block')]
+            if fallback_candidates:
+                best_intent = max(fallback_candidates, key=lambda x: x.get('score') or 0)
+                fb_data = best_intent.get('raw', {}).copy()
+                fb_data['action'] = best_intent.get('initial_action')
+                fb_data.setdefault('leverage', params.get('default_leverage', 5))
+                fb_data.setdefault('size_pct', params.get('size_pct', 0.15))
+                fb_data['hold_quality'] = None
+                fb_data['rationale'] = (fb_data.get('rationale') or '').strip() + " | fallback_from_decision_intent"
+                fb_data['score'] = best_intent.get('score') or fb_data.get('score')
+
+                try:
+                    fb_decision = Decision(**fb_data)
+                    open_hour_count += 1
+                    open_day_count += 1
+                    open_positions_count += 1
+                    symbol_cooldowns[best_intent.get('symbol')] = now_ts
+                    valid_decisions.append(fb_decision)
+                    save_ai_decision({
+                        'symbol': fb_decision.symbol,
+                        'action': fb_decision.action,
+                        'leverage': fb_decision.leverage,
+                        'size_pct': fb_decision.size_pct,
+                        'rationale': fb_decision.rationale,
+                        'analysis_summary': decision_json.get("analysis_summary", "")
+                    })
+                    logger.info(f"✅ Fallback aperto da intento originale: {fb_decision.symbol} {fb_decision.action}")
+                except Exception as e:
+                    logger.warning(f"Fallback intent invalid: {e}")
 
         # Persist updated cooldowns
         state['symbol_cooldowns'] = symbol_cooldowns
