@@ -775,6 +775,12 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                     elif not counter_trend and (score_val or 0) >= params.get("trend_score_threshold", 0.35):
                         path_score_ok = True
 
+                    # Flexible override: if score is above the global minimum, allow but trim size
+                    if not path_score_ok and (score_val or 0) >= params.get("min_score_trade", 0.35):
+                        path_score_ok = True
+                        d['size_pct'] = d.get('size_pct', 0.1) * 0.5
+                        rationale_suffix.append('flex_override')
+
                     if not path_score_ok or conditions_true < 1:
                         d['action'] = 'HOLD'
                         rationale_suffix.append('quality_score_low')
