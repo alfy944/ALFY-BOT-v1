@@ -781,7 +781,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                         d['size_pct'] = d.get('size_pct', 0.1) * 0.5
                         rationale_suffix.append('flex_override')
 
-                    if not path_score_ok or conditions_true < 1:
+                    if not path_score_ok:
                         d['action'] = 'HOLD'
                         rationale_suffix.append('quality_score_low')
 
