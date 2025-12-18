@@ -1007,8 +1007,13 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                     if is_open_action(cand or ''):
                         fb_action = cand
                         break
-                if not is_open_action(fb_action or ''):
-                    logger.info("⚠️ Fallback intent scartato: nessuna azione OPEN valida rilevata")
+                # Rifiuta fallback se manca un'esplicita istruzione di apertura nell'analisi
+                analysis_requires_open = is_open_action(best_intent.get('analysis_intent') or '')
+                # Considera come blocco duro un rationale che include rejected_by
+                rationale_text = (fb_data.get('rationale') or '').lower()
+                rejected_tag = 'rejected_by' in rationale_text
+                if not is_open_action(fb_action or '') or not analysis_requires_open or rejected_tag:
+                    logger.info("⚠️ Fallback intent scartato: manca istruzione open esplicita o rationale in rejected_by")
                 else:
                     # Rispetta il limite max posizioni aperte
                     if max_open_positions and open_positions_count >= max_open_positions:
@@ -1019,8 +1024,13 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                         fb_data.setdefault('leverage', params.get('default_leverage', 5))
                         fb_data.setdefault('size_pct', params.get('size_pct', 0.15))
                         fb_data['hold_quality'] = None
-                        fb_data['rationale'] = (fb_data.get('rationale') or '').strip() + " | fallback_from_decision_intent"
-                        fb_data['score'] = best_intent.get('score') or fb_data.get('score') or params.get('min_score_trade', 0.35)
+                        fb_data['rationale'] = (fb_data.get('rationale') or '').strip() + " | fallback_from_analysis_intent"
+                        fb_score = best_intent.get('score') or fb_data.get('score') or params.get('min_score_trade', 0.35)
+                        # Enforce minimum score threshold to avoid low-quality forced opens
+                        if fb_score < params.get('min_score_trade', 0.35):
+                            logger.info("⚠️ Fallback scartato: score sotto il minimo")
+                            continue
+                        fb_data['score'] = fb_score
 
                         try:
                             fb_decision = Decision(**fb_data)
