@@ -466,6 +466,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
         valid_decisions = []
         for d in decision_json.get("decisions", []):
             symbol_key = (d.get('symbol') or '').upper()
+            initial_action = d.get('action')
             rationale_suffix = []
             score_val = d.get("score")
             tech = assets_summary.get(symbol_key, {})
@@ -785,15 +786,6 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                         d['action'] = 'HOLD'
                         rationale_suffix.append('quality_score_low')
 
-            # Hold quality flag
-            if d.get('action') == 'HOLD':
-                if conditions_true >= 2 or (vol_ratio is not None and vol_ratio >= 1.2):
-                    d['hold_quality'] = "weak"
-                else:
-                    d['hold_quality'] = "strong"
-            else:
-                d['hold_quality'] = None
-
             # Entry triggers (need at least one)
             if is_open_action(d.get('action', '')) and d['action'] != 'HOLD':
                 trigger_price = False
@@ -826,6 +818,37 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 if not (trigger_price or trigger_momentum or trigger_time):
                     d['action'] = 'HOLD'
                     rationale_suffix.append('no_entry_trigger')
+
+            # Hold quality flag
+            if d.get('action') == 'HOLD':
+                if conditions_true >= 2 or (vol_ratio is not None and vol_ratio >= 1.2):
+                    d['hold_quality'] = "weak"
+                else:
+                    d['hold_quality'] = "strong"
+            else:
+                d['hold_quality'] = None
+
+            # If the LLM wanted to open but soft filters blocked it, allow a trimmed open
+            hard_tags = {
+                'score_below_min',
+                'cooldown active',
+                'max trades/hour reached',
+                'max trades/day reached',
+                'max open positions reached',
+                'blocked by disable_symbols',
+                'blocked by regime filter',
+            }
+            hard_block = any(
+                r in hard_tags
+                or r.startswith('distance_filter')
+                or r.startswith('transition_guard')
+                for r in rationale_suffix
+            )
+            if initial_action in ("OPEN_LONG", "OPEN_SHORT") and d.get('action') == 'HOLD' and not hard_block:
+                d['action'] = initial_action
+                d['size_pct'] = d.get('size_pct', 0.05) * 0.5
+                d['hold_quality'] = None
+                rationale_suffix.append('force_open_from_ai')
 
             # Disable lists
             if symbol_key in [s.upper() for s in controls.get('disable_symbols', [])]:
