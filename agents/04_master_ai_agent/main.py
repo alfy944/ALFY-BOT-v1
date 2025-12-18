@@ -806,10 +806,14 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 if d.get('action') == "OPEN_LONG":
                     if last_high_15m and price and price > last_high_15m:
                         trigger_price = True
+                    elif breakout_long or structure_break.get("long"):
+                        trigger_price = True
                     elif rsi_extreme_long:
                         trigger_price = True  # allow extreme RSI to satisfy trigger
                 if d.get('action') == "OPEN_SHORT":
                     if last_low_15m and price and price < last_low_15m:
+                        trigger_price = True
+                    elif breakout_short or structure_break.get("short"):
                         trigger_price = True
                     elif rsi_extreme_short:
                         trigger_price = True  # allow extreme RSI to satisfy trigger
