@@ -795,12 +795,24 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 trigger_time = False  # placeholder
                 last_high_15m = tech.get("last_high_15m")
                 last_low_15m = tech.get("last_low_15m")
-                if last_high_15m and price and d.get('action') == "OPEN_LONG" and price > last_high_15m:
-                    trigger_price = True
-                if last_low_15m and price and d.get('action') == "OPEN_SHORT" and price < last_low_15m:
-                    trigger_price = True
+
+                # Path-aware price triggers
+                if d.get('action') == "OPEN_LONG":
+                    if last_high_15m and price and price > last_high_15m:
+                        trigger_price = True
+                    elif rsi_extreme_long:
+                        trigger_price = True  # allow extreme RSI to satisfy trigger
+                if d.get('action') == "OPEN_SHORT":
+                    if last_low_15m and price and price < last_low_15m:
+                        trigger_price = True
+                    elif rsi_extreme_short:
+                        trigger_price = True  # allow extreme RSI to satisfy trigger
+
+                # Momentum trigger
                 if macd_improving or macd_small:
                     trigger_momentum = True
+
+                # If still no trigger, downgrade to HOLD
                 if not (trigger_price or trigger_momentum or trigger_time):
                     d['action'] = 'HOLD'
                     rationale_suffix.append('no_entry_trigger')
