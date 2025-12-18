@@ -375,6 +375,9 @@ def decide_batch(payload: AnalysisPayload):
         assets_summary = {}
         for k, v in payload.assets_data.items():
             t = v.get('tech', {})
+            if k.upper() != "BTC" and t.get("regime") == "range":
+                logger.info(f"⏳ Skip {k} per regime range")
+                continue
             assets_summary[k] = {
                 "price": t.get('price'),
                 "rsi_7": t.get('details', {}).get('rsi_7') or t.get('rsi_7'),
