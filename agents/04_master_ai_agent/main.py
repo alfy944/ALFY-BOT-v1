@@ -1029,26 +1029,26 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                         # Enforce minimum score threshold to avoid low-quality forced opens
                         if fb_score < params.get('min_score_trade', 0.35):
                             logger.info("⚠️ Fallback scartato: score sotto il minimo")
-                            continue
-                        fb_data['score'] = fb_score
+                        else:
+                            fb_data['score'] = fb_score
 
-                        try:
-                            fb_decision = Decision(**fb_data)
-                            open_hour_count += 1
-                            open_day_count += 1
-                            symbol_cooldowns[best_intent.get('symbol')] = now_ts
-                            valid_decisions.append(fb_decision)
-                            save_ai_decision({
-                                'symbol': fb_decision.symbol,
-                                'action': fb_decision.action,
-                                'leverage': fb_decision.leverage,
-                                'size_pct': fb_decision.size_pct,
-                                'rationale': fb_decision.rationale,
-                                'analysis_summary': decision_json.get("analysis_summary", "")
-                            })
-                            logger.info(f"✅ Fallback aperto da intento originale: {fb_decision.symbol} {fb_decision.action}")
-                        except Exception as e:
-                            logger.warning(f"Fallback intent invalid: {e}")
+                            try:
+                                fb_decision = Decision(**fb_data)
+                                open_hour_count += 1
+                                open_day_count += 1
+                                symbol_cooldowns[best_intent.get('symbol')] = now_ts
+                                valid_decisions.append(fb_decision)
+                                save_ai_decision({
+                                    'symbol': fb_decision.symbol,
+                                    'action': fb_decision.action,
+                                    'leverage': fb_decision.leverage,
+                                    'size_pct': fb_decision.size_pct,
+                                    'rationale': fb_decision.rationale,
+                                    'analysis_summary': decision_json.get("analysis_summary", "")
+                                })
+                                logger.info(f"✅ Fallback aperto da intento originale: {fb_decision.symbol} {fb_decision.action}")
+                            except Exception as e:
+                                logger.warning(f"Fallback intent invalid: {e}")
 
         # Persist updated cooldowns
         state['symbol_cooldowns'] = symbol_cooldowns
