@@ -259,6 +259,50 @@ def clamp(val: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, val))
 
 
+def infer_open_action_from_text(text: str) -> Optional[str]:
+    """Infer OPEN_LONG/OPEN_SHORT intent from a natural-language rationale.
+
+    Looks for clear keywords; returns None if no intent is detected.
+    """
+    if not text:
+        return None
+    txt = text.lower()
+    # prefer explicit short markers over generic "open" mentions
+    if (
+        "short" in txt
+        or "aprire uno short" in txt
+        or "aprire uno short" in txt
+        or "apri uno short" in txt
+        or "apri uno short" in txt
+    ):
+        return "OPEN_SHORT"
+    if (
+        "long" in txt
+        or "aprire un long" in txt
+        or "aprire una posizione long" in txt
+        or "apri un long" in txt
+        or "apri una posizione long" in txt
+    ):
+        return "OPEN_LONG"
+    if "open short" in txt:
+        return "OPEN_SHORT"
+    if "open long" in txt:
+        return "OPEN_LONG"
+    return None
+
+
+def infer_open_action_for_symbol(text: str, symbol: str) -> Optional[str]:
+    """Try to detect an open intent that references a specific symbol in free text."""
+    if not text or not symbol:
+        return None
+    sym = symbol.lower()
+    base = sym.replace("usdt", "") if "usdt" in sym else sym
+    txt = text.lower()
+    if sym in txt or base in txt:
+        return infer_open_action_from_text(text)
+    return None
+
+
 def count_recent_actions(decisions: list, minutes: int, action_filter=None) -> int:
     cutoff = datetime.utcnow().timestamp() - minutes * 60
     count = 0
@@ -464,6 +508,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
         open_positions_count = len(active_positions)
 
         valid_decisions = []
+        open_intents = []
         for d in decision_json.get("decisions", []):
             symbol_key = (d.get('symbol') or '').upper()
             initial_action = d.get('action')
@@ -474,6 +519,20 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             if computed_score is not None:
                 score_val = computed_score
                 d['score'] = computed_score
+            # Detect textual intent even if the action is HOLD
+            analysis_text = decision_json.get('analysis_summary', '') or ''
+            text_block = f"{d.get('rationale','')} {analysis_text}"
+            text_intent = infer_open_action_from_text(text_block)
+            analysis_intent = infer_open_action_for_symbol(analysis_text, symbol_key)
+            open_intents.append({
+                'symbol': symbol_key,
+                'initial_action': initial_action,
+                'text_intent': text_intent,
+                'analysis_intent': analysis_intent,
+                'raw': d.copy(),
+                'score': score_val,
+                'hard_block': False,
+            })
             trend_15m = (tech.get("trend_15m") or "").upper()
             trend_1h = (tech.get("trend_1h") or "").upper()
             price = tech.get("price")
@@ -844,6 +903,9 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 or r.startswith('transition_guard')
                 for r in rationale_suffix
             )
+            if open_intents:
+                intended = open_intents[-1].get('text_intent') or initial_action
+                open_intents[-1]['hard_block'] = hard_block or not is_open_action(intended)
             if initial_action in ("OPEN_LONG", "OPEN_SHORT") and d.get('action') == 'HOLD' and not hard_block:
                 d['action'] = initial_action
                 d['size_pct'] = d.get('size_pct', 0.05) * 0.5
@@ -917,6 +979,76 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 })
             except Exception as e:
                 logger.warning(f"Invalid decision: {e}")
+
+        # Se l'LLM ha dichiarato un'azione di apertura ma dopo i filtri non ci sono OPEN,
+        # prova a recuperare l'intento più forte (esclude blocchi hard come cooldown o limiti rischio)
+        open_valid = [dec for dec in valid_decisions if is_open_action(dec.action)]
+        if not open_valid:
+            fallback_candidates = [
+                i for i in open_intents
+                if (
+                    is_open_action(i.get('initial_action', ''))
+                    or is_open_action(i.get('text_intent') or '')
+                    or is_open_action(i.get('analysis_intent') or '')
+                ) and (
+                    not i.get('hard_block')
+                    or is_open_action(i.get('analysis_intent') or '')
+                )
+            ]
+            if fallback_candidates:
+                best_intent = max(fallback_candidates, key=lambda x: x.get('score') or 0)
+                fb_data = best_intent.get('raw', {}).copy()
+                fb_action = None
+                for cand in (
+                    best_intent.get('initial_action'),
+                    best_intent.get('analysis_intent'),
+                    best_intent.get('text_intent'),
+                ):
+                    if is_open_action(cand or ''):
+                        fb_action = cand
+                        break
+                # Rifiuta fallback se manca un'esplicita istruzione di apertura nell'analisi
+                analysis_requires_open = is_open_action(best_intent.get('analysis_intent') or '')
+                # Considera come blocco duro un rationale che include rejected_by
+                rationale_text = (fb_data.get('rationale') or '').lower()
+                rejected_tag = 'rejected_by' in rationale_text
+                if not is_open_action(fb_action or '') or not analysis_requires_open or rejected_tag:
+                    logger.info("⚠️ Fallback intent scartato: manca istruzione open esplicita o rationale in rejected_by")
+                else:
+                    # Rispetta il limite max posizioni aperte
+                    if max_open_positions and open_positions_count >= max_open_positions:
+                        logger.info("⚠️ Fallback bloccato: limite posizioni aperte raggiunto")
+                    else:
+                        open_positions_count += 1
+                        fb_data['action'] = fb_action
+                        fb_data.setdefault('leverage', params.get('default_leverage', 5))
+                        fb_data.setdefault('size_pct', params.get('size_pct', 0.15))
+                        fb_data['hold_quality'] = None
+                        fb_data['rationale'] = (fb_data.get('rationale') or '').strip() + " | fallback_from_analysis_intent"
+                        fb_score = best_intent.get('score') or fb_data.get('score') or params.get('min_score_trade', 0.35)
+                        # Enforce minimum score threshold to avoid low-quality forced opens
+                        if fb_score < params.get('min_score_trade', 0.35):
+                            logger.info("⚠️ Fallback scartato: score sotto il minimo")
+                        else:
+                            fb_data['score'] = fb_score
+
+                            try:
+                                fb_decision = Decision(**fb_data)
+                                open_hour_count += 1
+                                open_day_count += 1
+                                symbol_cooldowns[best_intent.get('symbol')] = now_ts
+                                valid_decisions.append(fb_decision)
+                                save_ai_decision({
+                                    'symbol': fb_decision.symbol,
+                                    'action': fb_decision.action,
+                                    'leverage': fb_decision.leverage,
+                                    'size_pct': fb_decision.size_pct,
+                                    'rationale': fb_decision.rationale,
+                                    'analysis_summary': decision_json.get("analysis_summary", "")
+                                })
+                                logger.info(f"✅ Fallback aperto da intento originale: {fb_decision.symbol} {fb_decision.action}")
+                            except Exception as e:
+                                logger.warning(f"Fallback intent invalid: {e}")
 
         # Persist updated cooldowns
         state['symbol_cooldowns'] = symbol_cooldowns
