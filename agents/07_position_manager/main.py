@@ -55,7 +55,8 @@ MASTER_AI_URL = os.getenv("MASTER_AI_URL", "http://04_master_ai_agent:8000").str
 WARNING_THRESHOLD = float(os.getenv("WARNING_THRESHOLD", "-0.05"))
 AI_REVIEW_THRESHOLD = float(os.getenv("AI_REVIEW_THRESHOLD", "-0.08"))
 REVERSE_THRESHOLD = float(os.getenv("REVERSE_THRESHOLD", "-0.10"))
-HARD_STOP_THRESHOLD = float(os.getenv("HARD_STOP_THRESHOLD", "-0.12"))
+HARD_STOP_THRESHOLD = float(os.getenv("HARD_STOP_THRESHOLD", "-0.10"))
+LOSS_COOLDOWN_MINUTES = int(os.getenv("LOSS_COOLDOWN_MINUTES", "30"))
 REVERSE_ENABLED = os.getenv("REVERSE_ENABLED", "false").lower() == "true"
 
 REVERSE_COOLDOWN_MINUTES = int(os.getenv("REVERSE_COOLDOWN_MINUTES", "30"))
@@ -868,6 +869,11 @@ def check_recent_closes_and_save_cooldown():
             if close_time_sec > existing_time:
                 cooldowns[direction_key] = close_time_sec
                 cooldowns[symbol_raw] = close_time_sec
+                # se chiusura in perdita, applica cooldown esteso solo per quella direzione
+                pnl_dollars = to_float(item.get("closedPnl"), 0.0)
+                if pnl_dollars < 0:
+                    cooldowns[f"{direction_key}_loss"] = close_time_sec
+                    print(f"💾 Cooldown perdita registrato per {direction_key} ({LOSS_COOLDOWN_MINUTES} minuti)")
                 changed = True
                 print(f"💾 Cooldown auto-salvato per {direction_key} (chiusura Bybit)")
 
@@ -938,6 +944,15 @@ def check_smart_reverse():
             if roi <= HARD_STOP_THRESHOLD:
                 print(f"🛑 HARD STOP: {symbol} {side_dir.upper()} ROI={roi*100:.2f}% - Chiusura immediata!")
                 execute_close_position(symbol)
+                # registra chiusura forzata per evitare riaperture immediate nello stesso verso
+                try:
+                    ensure_parent_dir(COOLDOWN_FILE)
+                    cooldowns = load_json(COOLDOWN_FILE, default={})
+                    now_ts = time.time()
+                    cooldowns[f"{sym_id}_{side_dir}"] = now_ts
+                    save_json(COOLDOWN_FILE, cooldowns)
+                except Exception:
+                    pass
                 continue
 
             if roi <= REVERSE_THRESHOLD:
@@ -1219,6 +1234,20 @@ def open_position(order: OrderRequest):
             last_close_time = to_float(cooldowns.get(cooldown_key), 0.0)
             elapsed = time.time() - last_close_time
             cooldown_window = max(COOLDOWN_MINUTES, REVERSE_COOLDOWN_MINUTES)
+
+            # Se c'è una chiusura in perdita, applica finestra dedicata solo per quella direzione
+            loss_key = f"{cooldown_key}_loss"
+            last_loss_time = to_float(cooldowns.get(loss_key), 0.0)
+            loss_elapsed = time.time() - last_loss_time
+
+            if last_loss_time > 0 and loss_elapsed < (LOSS_COOLDOWN_MINUTES * 60):
+                minutes_left = LOSS_COOLDOWN_MINUTES - (loss_elapsed / 60)
+                print(f"⏳ COOLDOWN PERDITA: {sym_ccxt} {requested_dir} - ancora {minutes_left:.1f} minuti")
+                return {
+                    "status": "cooldown",
+                    "msg": f"Cooldown post-perdita per {sym_ccxt} {requested_dir}",
+                    "minutes_left": round(minutes_left, 1),
+                }
 
             if elapsed < (cooldown_window * 60):
                 minutes_left = cooldown_window - (elapsed / 60)

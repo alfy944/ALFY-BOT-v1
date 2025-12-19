@@ -18,6 +18,10 @@ EVOLUTION_INTERVAL_HOURS = int(os.getenv("EVOLUTION_INTERVAL_HOURS", "48"))
 MIN_TRADES_FOR_EVOLUTION = int(os.getenv("MIN_TRADES_FOR_EVOLUTION", "5"))
 BACKTEST_IMPROVEMENT_THRESHOLD = float(os.getenv("BACKTEST_IMPROVEMENT_THRESHOLD", "0.5"))
 MAX_STRATEGY_ARCHIVE = int(os.getenv("MAX_STRATEGY_ARCHIVE", "20"))
+RAPID_TRADE_THRESHOLD = int(os.getenv("RAPID_TRADE_THRESHOLD", "18"))
+RAPID_LOOKBACK_HOURS = int(os.getenv("RAPID_LOOKBACK_HOURS", "12"))
+RAPID_REWARD_THRESHOLD = float(os.getenv("RAPID_REWARD_THRESHOLD", "-3.0"))
+RAPID_COOLDOWN_HOURS = int(os.getenv("RAPID_COOLDOWN_HOURS", "6"))
 
 DATA_DIR = "/data"
 EVOLVED_PARAMS_FILE = f"{DATA_DIR}/evolved_params.json"
@@ -341,6 +345,22 @@ def should_enable_safe_mode(trades: List[Dict[str, Any]], drawdown: float, dd_th
     if len(last_three) == 3 and all((trade_equity_return(t) <= 0) for t in last_three):
         return True
     return drawdown > dd_threshold
+
+
+def rapid_adaptation_signal() -> Optional[Dict[str, Any]]:
+    """
+    Trigger an out-of-band evolution when trade volume spikes and quality drops.
+    """
+    trades = get_recent_trades(hours=RAPID_LOOKBACK_HOURS)
+    reward = compute_reward(trades)
+    trade_count = reward.get("trade_count", 0)
+    if trade_count >= RAPID_TRADE_THRESHOLD and reward.get("reward", 0) <= RAPID_REWARD_THRESHOLD:
+        return {
+            "trade_count": trade_count,
+            "reward": reward.get("reward", 0),
+            "lookback_hours": RAPID_LOOKBACK_HOURS,
+        }
+    return None
 
 
 async def call_deepseek(prompt: str) -> str:
@@ -744,18 +764,37 @@ You MUST respond ONLY with valid JSON in this format:
 async def evolution_loop():
     """Background task that runs evolution every N hours"""
     interval_seconds = EVOLUTION_INTERVAL_HOURS * 3600
+    check_seconds = min(1800, interval_seconds)  # poll for rapid triggers at most every 30min
+    logger.info(f"🔄 Starting evolution loop (every {EVOLUTION_INTERVAL_HOURS} hours, with rapid triggers)")
 
-    logger.info(f"🔄 Starting evolution loop (every {EVOLUTION_INTERVAL_HOURS} hours)")
+    last_rapid_ts: Optional[datetime] = None
+    next_scheduled = datetime.now()
 
     try:
         await profit_evolution_cycle()
+        next_scheduled = datetime.now() + timedelta(seconds=interval_seconds)
     except Exception as e:
         logger.error(f"Initial evolution cycle failed: {e}")
 
     while True:
+        now = datetime.now()
         try:
-            await asyncio.sleep(interval_seconds)
-            await profit_evolution_cycle()
+            if now >= next_scheduled:
+                await profit_evolution_cycle()
+                next_scheduled = now + timedelta(seconds=interval_seconds)
+
+            rapid_meta = rapid_adaptation_signal()
+            cooldown_ok = (last_rapid_ts is None) or ((now - last_rapid_ts).total_seconds() >= RAPID_COOLDOWN_HOURS * 3600)
+            if rapid_meta and cooldown_ok:
+                logger.info(
+                    f"🚀 Rapid evolution trigger: {rapid_meta['trade_count']} trades in {rapid_meta['lookback_hours']}h with reward {rapid_meta['reward']:.2f}"
+                )
+                log_evolution("rapid_trigger", {**rapid_meta, "cooldown_hours": RAPID_COOLDOWN_HOURS})
+                await profit_evolution_cycle()
+                last_rapid_ts = datetime.now()
+                next_scheduled = max(next_scheduled, last_rapid_ts + timedelta(seconds=interval_seconds / 2))
+
+            await asyncio.sleep(check_seconds)
         except Exception as e:
             logger.error(f"Evolution loop error: {e}")
             await asyncio.sleep(3600)  # Wait 1 hour on error
