@@ -54,7 +54,7 @@ DEFAULT_CONTROLS = {
     "disable_symbols": [],
     "disable_regimes": [],
     "max_trades_per_hour": 0,
-    "cooldown_minutes": 0,
+    "cooldown_minutes": 20,
     "safe_mode": False,
     "max_trades_per_day": None,
     "size_cap": None,
@@ -367,23 +367,25 @@ def load_evolved_config() -> Dict[str, Any]:
 
 
 SYSTEM_PROMPT = """
-Sei un TRADER ALGORITMICO AGGRESSIVO ma DISCIPLINATO.
-Il tuo compito è analizzare e poi AGIRE solo se i segnali sono solidi.
+Sei un TRADER ALGORITMICO PRUDENTE e DISCIPLINATO.
+Il tuo compito è analizzare e poi AGIRE solo se i segnali sono solidi e con R/R netto convincente.
 
 LINEE GUIDA CHIAVE:
-- Se i segnali tecnici sono chiari e coerenti con il trend -> apri la posizione (OPEN_LONG/OPEN_SHORT).
+- Se i segnali tecnici sono chiari, coerenti con il trend e con almeno 2R pulito al netto di fee/slippage -> apri la posizione (OPEN_LONG/OPEN_SHORT).
 - Se i segnali sono deboli o misti -> scegli esplicitamente HOLD.
+- Se manca timing o volatilità sostenibile, rimani in HOLD: evita ingressi impulsivi o da “catching a knife”.
 - Se esistono posizioni aperte valuta la coerenza prima di aprire nuove operazioni.
 - Non superare mai 3 posizioni aperte contemporaneamente: se ci sono già 3 trade aperti, apri solo se prima chiudi qualcosa o resta in HOLD.
-- Usa leva e size in base alla qualità del setup (non default fissi).
+- Usa leva e size in base alla qualità del setup (non default fissi) ma non aprire set-up marginali solo per riempire slot liberi.
 - RSI è permissivo: LONG fino a RSI <55, SHORT da RSI >45; se RSI è estremo (LONG <35, SHORT >65) puoi ignorare il trend per counter-trend.
 - Regime range non è un veto: riduci lo score (≈0.8x) e la size, non bloccare il trade.
 - MACD è peso leggero: contrario = -0.1 sullo score, favorevole = +0.1; niente veto diretto.
-- Score minimi (path-based): trend ≥0.35, transition ≥0.35, counter-trend ≥0.70.
+- Score minimi (path-based): trend ≥0.35, transition ≥0.35, counter-trend ≥0.70 e preferisci HOLD se lo score è basso o borderline.
 - Pesa i segnali con priorità esplicite: trend TF alto = driver (50%), momentum/MACD = conferma (30%), RSI = timing (20%). Se trend domina consenti il trade; se momentum domina riduci size ma non bloccare; HOLD solo con segnali tutti contrari.
 - Ogni HOLD deve spiegare rejected_by = (RSI | regime | score | momentum | risk_control) nel rationale per rendere l’azione chiara.
 - Gestione SL/TP per evitare chiusure premature: stop basato su ATR (usa atr_sl_factor rispetto all’ATR e oltre l’ultimo swing, non sotto il rumore), TP minimo 2R–3R coerente con atr_multiplier_tp; quando il prezzo raggiunge almeno 1R (breakeven_R) porta lo SL a breakeven e poi trail con trailing_atr_factor. Non chiudere anticipatamente senza un motivo contrario forte.
 - No scalping: entra solo se il potenziale movimento offre spazio (≥1–1.5 ATR fino al primo target) e R/R atteso ≥2 al netto delle commissioni; evita TP ravvicinati o trade che coprono a malapena le fee. Non stringere gli stop in anticipo: porta a breakeven solo dopo 1R pieno, attiva il trailing oltre ~1.2–1.5R, e mantieni la posizione finché non scatta SL/TP o emergono segnali contrari forti.
+- Dopo drawdown recenti o segnali contraddittori privilegia HOLD e attendi nuova convalida multi-timeframe: nessun trade aggressivo per recuperare perdite.
 
 FORMATO RISPOSTA JSON OBBLIGATORIO:
 {
@@ -507,6 +509,8 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
         now_ts = datetime.utcnow().timestamp()
         max_open_positions = controls.get('max_open_positions') if controls.get('max_open_positions') is not None else params.get('max_open_positions', 3)
         open_positions_count = len(active_positions)
+        limit_hour = controls.get('max_trades_per_hour') or 0
+        limit_day = controls.get('max_trades_per_day') or params.get('max_daily_trades')
 
         valid_decisions = []
         open_intents = []
@@ -924,9 +928,6 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
 
             # Trade frequency limits
             if is_open_action(d.get('action', '')):
-                limit_hour = controls.get('max_trades_per_hour') or 0
-                limit_day = controls.get('max_trades_per_day') or params.get('max_daily_trades')
-
                 if limit_hour and open_hour_count >= limit_hour:
                     d['action'] = 'HOLD'
                     rationale_suffix.append('max trades/hour reached')
@@ -1004,6 +1005,16 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 # Considera come blocco duro un rationale che include rejected_by
                 rationale_text = (fb_data.get('rationale') or '').lower()
                 rejected_tag = 'rejected_by' in rationale_text
+                score_floor = max(params.get('trend_score_threshold', 0.35), params.get('min_score_trade', 0.35)) + 0.1
+                if limit_hour and open_hour_count >= limit_hour:
+                    logger.info("⚠️ Fallback bloccato: limite orario raggiunto")
+                    fb_action = None
+                if limit_day and open_day_count >= limit_day:
+                    logger.info("⚠️ Fallback bloccato: limite giornaliero raggiunto")
+                    fb_action = None
+                if best_intent.get('hard_block'):
+                    logger.info("⚠️ Fallback scartato: hard block attivo")
+                    fb_action = None
                 if not is_open_action(fb_action or '') or not analysis_requires_open or rejected_tag:
                     logger.info("⚠️ Fallback intent scartato: manca istruzione open esplicita o rationale in rejected_by")
                 else:
@@ -1019,29 +1030,29 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                         fb_data['rationale'] = (fb_data.get('rationale') or '').strip() + " | fallback_from_analysis_intent"
                         fb_score = best_intent.get('score') or fb_data.get('score') or params.get('min_score_trade', 0.35)
                         # Enforce minimum score threshold to avoid low-quality forced opens
-                if fb_score < params.get('min_score_trade', 0.35):
-                    logger.info("⚠️ Fallback scartato: score sotto il minimo")
-                else:
-                    fb_data['score'] = fb_score
-                    fb_data['size_pct'] = FIXED_SIZE_PCT
+                        if fb_score < score_floor:
+                            logger.info("⚠️ Fallback scartato: score sotto soglia conservativa")
+                        else:
+                            fb_data['score'] = fb_score
+                            fb_data['size_pct'] = FIXED_SIZE_PCT
 
-                    try:
-                        fb_decision = Decision(**fb_data)
-                        open_hour_count += 1
-                        open_day_count += 1
-                        symbol_cooldowns[best_intent.get('symbol')] = now_ts
-                        valid_decisions.append(fb_decision)
-                        save_ai_decision({
-                            'symbol': fb_decision.symbol,
-                            'action': fb_decision.action,
-                            'leverage': fb_decision.leverage,
-                            'size_pct': fb_decision.size_pct,
-                            'rationale': fb_decision.rationale,
-                            'analysis_summary': decision_json.get("analysis_summary", "")
-                        })
-                        logger.info(f"✅ Fallback aperto da intento originale: {fb_decision.symbol} {fb_decision.action}")
-                    except Exception as e:
-                        logger.warning(f"Fallback intent invalid: {e}")
+                            try:
+                                fb_decision = Decision(**fb_data)
+                                open_hour_count += 1
+                                open_day_count += 1
+                                symbol_cooldowns[best_intent.get('symbol')] = now_ts
+                                valid_decisions.append(fb_decision)
+                                save_ai_decision({
+                                    'symbol': fb_decision.symbol,
+                                    'action': fb_decision.action,
+                                    'leverage': fb_decision.leverage,
+                                    'size_pct': fb_decision.size_pct,
+                                    'rationale': fb_decision.rationale,
+                                    'analysis_summary': decision_json.get("analysis_summary", "")
+                                })
+                                logger.info(f"✅ Fallback aperto da intento originale: {fb_decision.symbol} {fb_decision.action}")
+                            except Exception as e:
+                                logger.warning(f"Fallback intent invalid: {e}")
 
         # Persist updated cooldowns
         state['symbol_cooldowns'] = symbol_cooldowns
