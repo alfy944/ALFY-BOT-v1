@@ -66,7 +66,6 @@ API_COSTS_FILE = "/data/api_costs.json"
 AI_DECISIONS_FILE = "/data/ai_decisions.json"
 MASTER_STATE_FILE = "/data/master_state.json"
 MIN_SYMBOL_COOLDOWN_MINUTES = 15
-FIXED_SIZE_PCT = 0.20
 
 
 def log_api_call(tokens_in: int, tokens_out: int):
@@ -258,6 +257,17 @@ def weighted_score(action: str, tech: dict) -> Optional[float]:
 
 def clamp(val: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, val))
+
+
+def dynamic_size_pct(score: Optional[float], params: Dict[str, Any]) -> float:
+    base_size = float(params.get("size_pct", 0.15))
+    min_score = float(params.get("min_score_trade", 0.4))
+    if score is None:
+        return clamp(base_size, 0.05, 0.25)
+    norm = (score - min_score) / max(0.1, (1.0 - min_score))
+    norm = clamp(norm, 0.0, 1.0)
+    size = base_size * (0.6 + 0.4 * norm)
+    return clamp(size, 0.05, 0.25)
 
 
 def infer_open_action_from_text(text: str) -> Optional[str]:
@@ -525,7 +535,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 score_val = computed_score
                 d['score'] = computed_score
             if is_open_action(d.get('action', '')):
-                d['size_pct'] = FIXED_SIZE_PCT
+                d['size_pct'] = dynamic_size_pct(score_val, params)
             # Detect textual intent even if the action is HOLD
             analysis_text = decision_json.get('analysis_summary', '') or ''
             text_block = f"{d.get('rationale','')} {analysis_text}"
@@ -550,7 +560,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             rsi_extreme_long = rsi_val < 35
             rsi_extreme_short = rsi_val > 65
 
-            # Dynamic sizing disabilitata: usa size fissa
+            # Dynamic sizing attiva: usa size in base alla qualità dello score
 
             # Multi-timeframe confirmation (15m vs 1h)
             trend_15m = (tech.get("trend_15m") or "").upper()
@@ -904,7 +914,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 open_intents[-1]['hard_block'] = hard_block or not is_open_action(intended)
                 if initial_action in ("OPEN_LONG", "OPEN_SHORT") and d.get('action') == 'HOLD' and not hard_block:
                     d['action'] = initial_action
-                    d['size_pct'] = FIXED_SIZE_PCT
+                    d['size_pct'] = dynamic_size_pct(score_val, params)
                     d['hold_quality'] = None
                     rationale_suffix.append('force_open_from_ai')
 
@@ -1034,7 +1044,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                             logger.info("⚠️ Fallback scartato: score sotto soglia conservativa")
                         else:
                             fb_data['score'] = fb_score
-                            fb_data['size_pct'] = FIXED_SIZE_PCT
+                            fb_data['size_pct'] = dynamic_size_pct(fb_score, params)
 
                             try:
                                 fb_decision = Decision(**fb_data)
