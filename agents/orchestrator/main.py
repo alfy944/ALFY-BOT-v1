@@ -144,20 +144,19 @@ async def analysis_cycle():
 
         num_positions = len(active_symbols)
         print(f"\n[{datetime.now().strftime('%H:%M')}] 📊 Position check: {num_positions}/{MAX_POSITIONS} posizioni aperte")
-        # Snapshot di monitoraggio per la dashboard (anche se non ci sono alert)
-        snapshot_reason = "Monitoraggio periodico: nessuna perdita critica rilevata"
+        # Snapshot di monitoraggio per la dashboard solo se ci sono posizioni attive
         if position_details:
             losses = [p for p in position_details if p.get('pnl_pct', 0) < 0]
             snapshot_reason = (
                 f"Monitoraggio periodico: {len(position_details)} posizioni, "
                 f"{len(losses)} in perdita"
             )
-        save_monitoring_decision(
-            positions_count=len(position_details),
-            max_positions=MAX_POSITIONS,
-            positions_details=position_details,
-            reason=snapshot_reason
-        )
+            save_monitoring_decision(
+                positions_count=len(position_details),
+                max_positions=MAX_POSITIONS,
+                positions_details=position_details,
+                reason=snapshot_reason
+            )
         
         # 2. LOGICA OTTIMIZZAZIONE
         positions_losing = []

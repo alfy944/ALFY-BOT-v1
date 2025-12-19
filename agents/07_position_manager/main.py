@@ -55,7 +55,7 @@ MASTER_AI_URL = os.getenv("MASTER_AI_URL", "http://04_master_ai_agent:8000").str
 WARNING_THRESHOLD = float(os.getenv("WARNING_THRESHOLD", "-0.05"))
 AI_REVIEW_THRESHOLD = float(os.getenv("AI_REVIEW_THRESHOLD", "-0.08"))
 REVERSE_THRESHOLD = float(os.getenv("REVERSE_THRESHOLD", "-0.10"))
-HARD_STOP_THRESHOLD = float(os.getenv("HARD_STOP_THRESHOLD", "-0.10"))
+HARD_STOP_THRESHOLD = float(os.getenv("HARD_STOP_THRESHOLD", "-0.03"))
 LOSS_COOLDOWN_MINUTES = int(os.getenv("LOSS_COOLDOWN_MINUTES", "30"))
 REVERSE_ENABLED = os.getenv("REVERSE_ENABLED", "false").lower() == "true"
 
