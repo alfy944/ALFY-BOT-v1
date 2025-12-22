@@ -613,6 +613,12 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 d['action'] = 'HOLD'
                 rationale_suffix.append('spread_too_wide')
 
+            # Spread filter (avoid wide spreads for scalping)
+            spread_pct = tech.get("spread_pct")
+            if is_open_action(d.get('action', '')) and spread_pct is not None and spread_pct > params.get("max_spread_pct", 0.0015):
+                d['action'] = 'HOLD'
+                rationale_suffix.append('spread_too_wide')
+
             # Volume filter
             vol_ratio = tech.get("volume_ratio")
             if is_open_action(d.get('action', '')) and vol_ratio is not None and vol_ratio < 1.1:
