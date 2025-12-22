@@ -558,6 +558,9 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             rationale_suffix = []
             score_val = d.get("score")
             tech = assets_summary.get(symbol_key, {})
+            price = tech.get("price")
+            atr_val = tech.get("atr")
+            atr_pct = float(atr_val) / float(price) if atr_val and price else None
             computed_score = weighted_score(d.get('action', ''), tech) if is_open_action(d.get('action', '')) else None
             if computed_score is not None:
                 score_val = computed_score
@@ -581,10 +584,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             })
             trend_5m = (tech.get("trend_5m") or tech.get("trend") or "").upper()
             trend_15m = (tech.get("trend_15m") or "").upper()
-            price = tech.get("price")
             ema20 = tech.get("ema_20")
-            atr_val = tech.get("atr")
-            atr_pct = float(atr_val) / float(price) if atr_val and price else None
             structure_break = tech.get("structure_break") or {}
             last_high_5m = tech.get("last_high_5m")
             last_low_5m = tech.get("last_low_5m")
