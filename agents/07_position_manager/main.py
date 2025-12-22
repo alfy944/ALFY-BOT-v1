@@ -100,6 +100,7 @@ COOLDOWN_FILE = os.getenv("COOLDOWN_FILE", "/data/closed_cooldown.json")
 
 # --- AI DECISIONS FILE ---
 AI_DECISIONS_FILE = os.getenv("AI_DECISIONS_FILE", "/data/ai_decisions.json")
+ORDER_INTENTS_FILE = os.getenv("ORDER_INTENTS_FILE", "/data/order_intents.json")
 
 # --- LEARNING AGENT ---
 LEARNING_AGENT_URL = os.getenv("LEARNING_AGENT_URL", "http://10_learning_agent:8000").strip()
@@ -317,6 +318,15 @@ def save_json(path: str, data):
         except Exception:
             pass
 
+def record_order_intent(data: Dict[str, Any]) -> None:
+    intents = load_json(ORDER_INTENTS_FILE, default=[])
+    intents.append({
+        "timestamp": datetime.now().isoformat(),
+        **data,
+    })
+    intents = intents[-200:]
+    save_json(ORDER_INTENTS_FILE, intents)
+
 # =========================================================
 # EXCHANGE SETUP
 # =========================================================
@@ -421,6 +431,12 @@ def record_closed_trade(
             )
             if r.status_code == 200:
                 print(f"📚 Trade recorded for learning: {symbol} {side} PnL={pnl_pct:.2f}%")
+                record_order_intent({
+                    "event": "trade_recorded",
+                    "symbol": symbol,
+                    "side": side,
+                    "pnl_pct": round(pnl_pct, 2),
+                })
     except Exception as e:
         print(f"⚠️ Failed to record trade for learning: {e}")
 
@@ -641,6 +657,12 @@ def check_and_update_trailing_stops():
             # Momentum-based soft exit (2/3 conditions) only if protected/at TP0
             if momentum_exit.get(side_dir) and momentum_allowed:
                 print(f"⏱️ Momentum exit triggered for {symbol} ({side_dir}) - closing position")
+                record_order_intent({
+                    "event": "momentum_exit",
+                    "symbol": symbol,
+                    "side": side_dir,
+                    "reason": "momentum_exit",
+                })
                 execute_close_position(symbol)
                 continue
 
@@ -663,6 +685,12 @@ def check_and_update_trailing_stops():
                         f"⏱️ Time-based exit {symbol}: bars={elapsed_bars:.1f}, r={r_multiple:.2f}, "
                         f"ATR% {current_atr_pct:.4f} (< {initial_atr_pct:.4f})"
                     )
+                    record_order_intent({
+                        "event": "time_exit",
+                        "symbol": symbol,
+                        "side": side_dir,
+                        "reason": "time_exit",
+                    })
                     execute_close_position(symbol)
                     continue
 
@@ -850,6 +878,13 @@ def execute_close_position(symbol: str) -> bool:
         close_side = "sell" if side_dir == "long" else "buy"
 
         print(f"🔒 Chiudo posizione {sym_ccxt}: {side_dir} size={size} idx={position_idx}")
+        record_order_intent({
+            "event": "close_initiated",
+            "symbol": sym_ccxt,
+            "side": side_dir,
+            "size": size,
+            "order_id": None,
+        })
 
         params = {"category": "linear", "reduceOnly": True}
         if HEDGE_MODE:
@@ -880,11 +915,23 @@ def execute_close_position(symbol: str) -> bool:
             cooldowns[sym_id] = now_ts
 
             save_json(COOLDOWN_FILE, cooldowns)
-            print(f"💾 Cooldown salvato per {direction_key}")
+        print(f"💾 Cooldown salvato per {direction_key}")
+        record_order_intent({
+            "event": "cooldown_saved",
+            "symbol": sym_ccxt,
+            "side": side_dir,
+            "reason": direction_key,
+        })
         except Exception as e:
             print(f"⚠️ Errore salvataggio cooldown: {e}")
 
         print(f"✅ Posizione {sym_ccxt} chiusa con successo | PnL={pnl_pct:.2f}%")
+        record_order_intent({
+            "event": "close_success",
+            "symbol": sym_ccxt,
+            "side": side_dir,
+            "pnl_pct": round(pnl_pct, 2),
+        })
         return True
 
     except Exception as e:
@@ -978,6 +1025,18 @@ def execute_reverse(symbol: str, current_side_raw: str, recovery_size_pct: float
             params["positionIdx"] = pos_idx
 
         res = place_entry_order(sym_ccxt, new_side, final_qty, limit_price, params)
+        record_order_intent({
+            "event": "order_placed",
+            "symbol": sym_ccxt,
+            "side": new_side,
+            "qty": final_qty,
+            "limit_price": limit_price,
+            "sl": sl_str,
+            "tp": tp_str,
+            "order_type": res.get("type"),
+            "status": res.get("status"),
+            "order_id": res.get("id"),
+        })
         if TP_PARTIAL_ENABLED and tp_price:
             partial_price = compute_take_profit_price(
                 price,
@@ -1504,6 +1563,18 @@ def open_position(order: OrderRequest):
             params["positionIdx"] = pos_idx
 
         res = place_entry_order(sym_ccxt, requested_side, final_qty, limit_price, params)
+        record_order_intent({
+            "event": "order_placed",
+            "symbol": sym_ccxt,
+            "side": requested_side,
+            "qty": final_qty,
+            "limit_price": limit_price,
+            "sl": sl_str,
+            "tp": tp_str,
+            "order_type": res.get("type"),
+            "status": res.get("status"),
+            "order_id": res.get("id"),
+        })
         if TP_PARTIAL_ENABLED and tp_price:
             partial_price = compute_take_profit_price(
                 price,

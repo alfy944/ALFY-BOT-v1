@@ -14,6 +14,7 @@ CLOSED_POSITIONS_FILE = os.path.join(DATA_DIR, 'closed_positions.json')
 # Shared data directory (cross-container data)
 SHARED_DATA_DIR = '/data'
 AI_DECISIONS_FILE = os.path.join(SHARED_DATA_DIR, 'ai_decisions.json')
+ORDER_INTENTS_FILE = os.path.join(SHARED_DATA_DIR, 'order_intents.json')
 
 # Starting values for performance calculations
 STARTING_DATE = "2024-12-01"
