@@ -217,7 +217,6 @@ def weighted_score(action: str, tech: dict) -> Optional[float]:
                 trend_score = 0.7
             else:
                 trend_score = 0.4
-
         macd_hist = tech.get("macd_hist")
         atr_val = tech.get("atr") or 0
         if macd_hist is not None:

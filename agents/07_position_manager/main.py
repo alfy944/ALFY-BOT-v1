@@ -54,6 +54,8 @@ BE_FEE_BUFFER_PCT = float(os.getenv("BE_FEE_BUFFER_PCT", "0.0008"))  # offset BE
 # --- PROFIT LOCK ---
 PROFIT_LOCK_PCT = float(os.getenv("PROFIT_LOCK_PCT", "0.012"))  # lock gains after 1.2% move
 PROFIT_LOCK_KEEP_PCT = float(os.getenv("PROFIT_LOCK_KEEP_PCT", "0.004"))  # keep at least 0.4%
+# --- QUICK PROFIT EXIT ---
+QUICK_TAKE_PCT = float(os.getenv("QUICK_TAKE_PCT", "0.003"))  # take quick profits after 0.3%
 # --- TIME-BASED EXIT ---
 TIME_EXIT_BARS = int(os.getenv("TIME_EXIT_BARS", "8"))
 TIME_EXIT_INTERVAL_MIN = int(os.getenv("TIME_EXIT_INTERVAL_MIN", "5"))
@@ -552,6 +554,14 @@ def check_and_update_trailing_stops():
             sl_at_be = (side_dir == "long" and sl_current >= entry_price) or (side_dir == "short" and sl_current <= entry_price)
             quality_score = position_risk_meta.get(sym_id, {}).get("score")
             trailing_atr_mult = 1.5 if (quality_score is not None and quality_score > 0.75) else 1.0
+
+            # Quick profit exit for aggressive scalping (fee-aware)
+            if QUICK_TAKE_PCT > 0 and entry_price:
+                quick_target = entry_price * QUICK_TAKE_PCT
+                if profit_distance >= max(quick_target, fee_buffer_abs):
+                    print(f"✅ Quick scalp exit for {symbol}: +{profit_distance:.6f} (fee buffer {fee_buffer_abs:.6f})")
+                    execute_close_position(symbol)
+                    continue
 
             # Profit lock: preserve gains once price moves enough
             if entry_price and mark_price and PROFIT_LOCK_PCT > 0:
