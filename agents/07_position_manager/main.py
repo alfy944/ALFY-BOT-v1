@@ -51,6 +51,9 @@ MICRO_SL_BUFFER_ATR = float(os.getenv("MICRO_SL_BUFFER_ATR", "0.1"))
 # --- BREAK-EVEN BUFFER ---
 BE_MIN_R = float(os.getenv("BE_MIN_R", "0.05"))  # require at least 0.05R before BE triggers
 BE_FEE_BUFFER_PCT = float(os.getenv("BE_FEE_BUFFER_PCT", "0.0008"))  # offset BE to cover taker+slippage
+# --- PROFIT LOCK ---
+PROFIT_LOCK_PCT = float(os.getenv("PROFIT_LOCK_PCT", "0.012"))  # lock gains after 1.2% move
+PROFIT_LOCK_KEEP_PCT = float(os.getenv("PROFIT_LOCK_KEEP_PCT", "0.004"))  # keep at least 0.4%
 # --- TIME-BASED EXIT ---
 TIME_EXIT_BARS = int(os.getenv("TIME_EXIT_BARS", "8"))
 TIME_EXIT_INTERVAL_MIN = int(os.getenv("TIME_EXIT_INTERVAL_MIN", "5"))
@@ -549,6 +552,19 @@ def check_and_update_trailing_stops():
             sl_at_be = (side_dir == "long" and sl_current >= entry_price) or (side_dir == "short" and sl_current <= entry_price)
             quality_score = position_risk_meta.get(sym_id, {}).get("score")
             trailing_atr_mult = 1.5 if (quality_score is not None and quality_score > 0.75) else 1.0
+
+            # Profit lock: preserve gains once price moves enough
+            if entry_price and mark_price and PROFIT_LOCK_PCT > 0:
+                target_lock = entry_price * (1 + PROFIT_LOCK_PCT) if side_dir == "long" else entry_price * (1 - PROFIT_LOCK_PCT)
+                if (side_dir == "long" and mark_price >= target_lock) or (side_dir == "short" and mark_price <= target_lock):
+                    lock_price = entry_price * (1 + PROFIT_LOCK_KEEP_PCT) if side_dir == "long" else entry_price * (1 - PROFIT_LOCK_KEEP_PCT)
+                    lock_price = lock_price + fee_buffer_abs if side_dir == "long" else max(0.0, lock_price - fee_buffer_abs)
+                    if side_dir == "long":
+                        if sl_current == 0.0 or lock_price > sl_current:
+                            new_sl_price = max(new_sl_price or 0, lock_price)
+                    else:
+                        if sl_current == 0.0 or lock_price < sl_current:
+                            new_sl_price = lock_price if new_sl_price is None else min(new_sl_price, lock_price)
 
             momentum_allowed = False
             if risk_distance > 0:
