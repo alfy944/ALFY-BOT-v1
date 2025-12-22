@@ -14,7 +14,7 @@ from components.fees_tracker import render_fees_section, get_trading_fees
 from components.api_costs import render_api_costs_section, calculate_api_costs
 from components.ai_reasoning import render_ai_reasoning
 import numpy as np
-from utils.data_manager import get_closed_positions_history
+from utils.data_manager import get_closed_positions_history, get_order_intents
 
 # --- COSTANTI ---
 DEFAULT_INITIAL_CAPITAL = 1000  # Capital iniziale di default per calcoli ROI
@@ -1209,6 +1209,22 @@ with tab3:
 # --- AI DECISION LOG ---
 st.markdown("---")
 render_ai_reasoning()
+
+# --- ORDER INTENTS LOG ---
+st.markdown("---")
+st.markdown("### 📌 Ordini Inviati (Limit/Market)")
+order_intents = get_order_intents()
+if order_intents:
+    df_orders = pd.DataFrame(order_intents)
+    if "timestamp" in df_orders.columns:
+        df_orders["timestamp"] = df_orders["timestamp"].astype(str).str.replace("T", " ").str[:19]
+    st.dataframe(
+        df_orders.tail(50),
+        use_container_width=True,
+        hide_index=True,
+    )
+else:
+    st.markdown('<div class="info-box">ℹ️ Nessun ordine registrato</div>', unsafe_allow_html=True)
 
 # --- FOOTER ---
 st.markdown("---")

@@ -28,33 +28,37 @@ AGENT_URLS = {
 
 # Default parameters (fallback)
 DEFAULT_PARAMS = {
-    "rsi_overbought": 70,
-    "rsi_oversold": 30,
-    "default_leverage": 5,
-    "size_pct": 0.20,
-    "reverse_threshold": 1.2,
-    "atr_multiplier_sl": 2.0,
-    "atr_multiplier_tp": 3.0,
-    "min_rsi_for_long": 40,
-    "max_rsi_for_short": 50,
+    "rsi_overbought": 68,
+    "rsi_oversold": 32,
+    "default_leverage": 6,
+    "size_pct": 0.10,
+    "reverse_threshold": 0.8,
+    "atr_multiplier_sl": 1.0,
+    "atr_multiplier_tp": 1.8,
+    "min_rsi_for_long": 45,
+    "max_rsi_for_short": 55,
     "min_score_trade": 0.40,
-    "trend_score_threshold": 0.40,
-    "range_score_threshold": 0.55,
-    "transition_score_threshold": 0.35,
-    "countertrend_score_threshold": 0.7,
-    "atr_sl_factor": 1.2,
-    "trailing_atr_factor": 1.0,
-    "breakeven_R": 1.0,
+    "trend_score_threshold": 0.25,
+    "range_score_threshold": 0.40,
+    "transition_score_threshold": 0.25,
+    "countertrend_score_threshold": 0.60,
+    "atr_sl_factor": 1.0,
+    "trailing_atr_factor": 0.7,
+    "breakeven_R": 0.6,
     "reverse_enabled": False,
-    "max_daily_trades": 3,
-    "max_open_positions": 3,
+    "max_daily_trades": 0,
+    "max_open_positions": 4,
+    "max_spread_pct": 0.0008,
+    "min_volume_ratio": 1.2,
+    "atr_pct_baseline": 0.003,
+    "dynamic_hour_limit": 0,
 }
 
 DEFAULT_CONTROLS = {
     "disable_symbols": [],
     "disable_regimes": [],
     "max_trades_per_hour": 0,
-    "cooldown_minutes": 20,
+    "cooldown_minutes": 0,
     "safe_mode": False,
     "max_trades_per_day": None,
     "size_cap": None,
@@ -65,7 +69,7 @@ EVOLVED_PARAMS_FILE = "/data/evolved_params.json"
 API_COSTS_FILE = "/data/api_costs.json"
 AI_DECISIONS_FILE = "/data/ai_decisions.json"
 MASTER_STATE_FILE = "/data/master_state.json"
-MIN_SYMBOL_COOLDOWN_MINUTES = 15
+MIN_SYMBOL_COOLDOWN_MINUTES = 0
 
 
 def log_api_call(tokens_in: int, tokens_out: int):
@@ -199,39 +203,45 @@ def weighted_score(action: str, tech: dict) -> Optional[float]:
         momentum_score = 0.5
         rsi_score = 0.5
 
-        trend_15m = (tech.get("trend_15m") or tech.get("trend") or "").upper()
-        trend_1h = (tech.get("trend_1h") or "").upper()
+        trend_1m = (tech.get("trend_1m") or "").upper()
+        trend_5m = (tech.get("trend_5m") or tech.get("trend") or "").upper()
+        trend_15m = (tech.get("trend_15m") or "").upper()
         action_is_long = action == "OPEN_LONG"
 
-        if trend_15m and trend_1h:
-            same = trend_15m == trend_1h
-            if action_is_long and trend_15m == "BULLISH" and same:
+        if trend_5m and trend_15m:
+            same = trend_5m == trend_15m
+            if action_is_long and trend_5m == "BULLISH" and same:
                 trend_score = 1.0
-            elif (not action_is_long) and trend_15m == "BEARISH" and same:
+            elif (not action_is_long) and trend_5m == "BEARISH" and same:
                 trend_score = 1.0
-            elif (action_is_long and trend_15m == "BULLISH") or ((not action_is_long) and trend_15m == "BEARISH"):
+            elif (action_is_long and trend_5m == "BULLISH") or ((not action_is_long) and trend_5m == "BEARISH"):
                 trend_score = 0.7
             else:
                 trend_score = 0.4
-
         macd_hist = tech.get("macd_hist")
         atr_val = tech.get("atr") or 0
         if macd_hist is not None:
-            # momentum è neutro salvo forte opposizione (>0.25*ATR)
+            # momentum è neutro salvo forte opposizione (>0.35*ATR)
             if action_is_long:
                 if macd_hist > 0:
                     momentum_score = 0.7
-                elif macd_hist < -0.25 * atr_val:
-                    momentum_score = 0.3
+                elif macd_hist < -0.35 * atr_val:
+                    momentum_score = 0.4
                 else:
                     momentum_score = 0.5
             else:
                 if macd_hist < 0:
                     momentum_score = 0.7
-                elif macd_hist > 0.25 * atr_val:
-                    momentum_score = 0.3
+                elif macd_hist > 0.35 * atr_val:
+                    momentum_score = 0.4
                 else:
                     momentum_score = 0.5
+
+        if trend_1m:
+            if action_is_long and trend_1m == "BULLISH":
+                trend_score = min(1.0, trend_score + 0.1)
+            elif (not action_is_long) and trend_1m == "BEARISH":
+                trend_score = min(1.0, trend_score + 0.1)
 
         rsi_val = tech.get("rsi") or tech.get("rsi_7")
         if rsi_val is not None:
@@ -259,14 +269,19 @@ def clamp(val: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, val))
 
 
-def dynamic_size_pct(score: Optional[float], params: Dict[str, Any]) -> float:
+def dynamic_size_pct(score: Optional[float], params: Dict[str, Any], atr_pct: Optional[float] = None) -> float:
     base_size = float(params.get("size_pct", 0.15))
-    min_score = float(params.get("min_score_trade", 0.4))
+    min_score = float(params.get("min_score_trade", 0.40))
     if score is None:
         return clamp(base_size, 0.05, 0.25)
     norm = (score - min_score) / max(0.1, (1.0 - min_score))
     norm = clamp(norm, 0.0, 1.0)
     size = base_size * (0.6 + 0.4 * norm)
+    if atr_pct is not None and atr_pct > 0:
+        baseline = float(params.get("atr_pct_baseline", 0.003))
+        if baseline > 0:
+            vol_boost = clamp(atr_pct / baseline, 0.7, 1.3)
+            size *= vol_boost
     return clamp(size, 0.05, 0.25)
 
 
@@ -377,24 +392,23 @@ def load_evolved_config() -> Dict[str, Any]:
 
 
 SYSTEM_PROMPT = """
-Sei un TRADER ALGORITMICO PRUDENTE e DISCIPLINATO.
-Il tuo compito è analizzare e poi AGIRE solo se i segnali sono solidi e con R/R netto convincente.
+Sei un TRADER ALGORITMICO FOCALIZZATO SULLO SCALPING, PRUDENTE e DISCIPLINATO.
+Il tuo compito è analizzare e poi AGIRE solo se i segnali sono solidi e con R/R netto convincente, su timeframe brevi.
 
 LINEE GUIDA CHIAVE:
-- Se i segnali tecnici sono chiari, coerenti con il trend e con almeno 2R pulito al netto di fee/slippage -> apri la posizione (OPEN_LONG/OPEN_SHORT).
+- Se i segnali tecnici sono chiari, coerenti con il trend e con almeno 1–1.5R pulito al netto di fee/slippage -> apri la posizione (OPEN_LONG/OPEN_SHORT).
 - Se i segnali sono deboli o misti -> scegli esplicitamente HOLD.
 - Se manca timing o volatilità sostenibile, rimani in HOLD: evita ingressi impulsivi o da “catching a knife”.
 - Se esistono posizioni aperte valuta la coerenza prima di aprire nuove operazioni.
-- Non superare mai 3 posizioni aperte contemporaneamente: se ci sono già 3 trade aperti, apri solo se prima chiudi qualcosa o resta in HOLD.
+- Non superare mai 4 posizioni aperte contemporaneamente: se ci sono già 4 trade aperti, apri solo se prima chiudi qualcosa o resta in HOLD.
 - Usa leva e size in base alla qualità del setup (non default fissi) ma non aprire set-up marginali solo per riempire slot liberi.
 - RSI è permissivo: LONG fino a RSI <55, SHORT da RSI >45; se RSI è estremo (LONG <35, SHORT >65) puoi ignorare il trend per counter-trend.
-- Regime range non è un veto: riduci lo score (≈0.8x) e la size, non bloccare il trade.
+- Regime range non è un veto: riduci lo score e la size, non bloccare il trade.
 - MACD è peso leggero: contrario = -0.1 sullo score, favorevole = +0.1; niente veto diretto.
-- Score minimi (path-based): trend ≥0.35, transition ≥0.35, counter-trend ≥0.70 e preferisci HOLD se lo score è basso o borderline.
-- Pesa i segnali con priorità esplicite: trend TF alto = driver (50%), momentum/MACD = conferma (30%), RSI = timing (20%). Se trend domina consenti il trade; se momentum domina riduci size ma non bloccare; HOLD solo con segnali tutti contrari.
+- Score minimi (path-based): trend ≥0.30, transition ≥0.30, counter-trend ≥0.65 e preferisci HOLD se lo score è basso o borderline.
+- Pesa i segnali con priorità esplicite: trend TF medio/alto = driver (50%), momentum/MACD = conferma (30%), RSI = timing (20%). Se trend domina consenti il trade; se momentum domina riduci size ma non bloccare; HOLD solo con segnali tutti contrari.
 - Ogni HOLD deve spiegare rejected_by = (RSI | regime | score | momentum | risk_control) nel rationale per rendere l’azione chiara.
-- Gestione SL/TP per evitare chiusure premature: stop basato su ATR (usa atr_sl_factor rispetto all’ATR e oltre l’ultimo swing, non sotto il rumore), TP minimo 2R–3R coerente con atr_multiplier_tp; quando il prezzo raggiunge almeno 1R (breakeven_R) porta lo SL a breakeven e poi trail con trailing_atr_factor. Non chiudere anticipatamente senza un motivo contrario forte.
-- No scalping: entra solo se il potenziale movimento offre spazio (≥1–1.5 ATR fino al primo target) e R/R atteso ≥2 al netto delle commissioni; evita TP ravvicinati o trade che coprono a malapena le fee. Non stringere gli stop in anticipo: porta a breakeven solo dopo 1R pieno, attiva il trailing oltre ~1.2–1.5R, e mantieni la posizione finché non scatta SL/TP o emergono segnali contrari forti.
+- Gestione SL/TP per scalping: stop basato su ATR (usa atr_sl_factor rispetto all’ATR e oltre l’ultimo swing, non sotto il rumore), TP minimo 1–2R coerente con atr_multiplier_tp; quando il prezzo raggiunge almeno 0.5–0.7R (breakeven_R) porta lo SL a breakeven e poi trail con trailing_atr_factor. Non chiudere anticipatamente senza un motivo contrario forte, ma riduci la permanenza se la volatilità si spegne.
 - Dopo drawdown recenti o segnali contraddittori privilegia HOLD e attendi nuova convalida multi-timeframe: nessun trade aggressivo per recuperare perdite.
 
 FORMATO RISPOSTA JSON OBBLIGATORIO:
@@ -432,20 +446,19 @@ def decide_batch(payload: AnalysisPayload):
         assets_summary = {}
         for k, v in payload.assets_data.items():
             t = v.get('tech', {})
-            if k.upper() != "BTC" and t.get("regime") == "range":
-                logger.info(f"⏳ Skip {k} per regime range")
-                continue
             assets_summary[k] = {
                 "price": t.get('price'),
                 "rsi_7": t.get('details', {}).get('rsi_7') or t.get('rsi_7'),
                 "trend": t.get('trend'),
-                "trend_15m": t.get('trend_15m') or t.get('trend'),
-                "trend_1h": t.get('trend_1h'),
+                "trend_1m": t.get('trend_1m'),
+                "trend_5m": t.get('trend_5m') or t.get('trend'),
+                "trend_15m": t.get('trend_15m'),
                 "regime": t.get('regime'),
                 "macd": t.get('macd'),
                 "macd_hist": t.get('macd_hist'),
                 "ema_20": (t.get('details') or {}).get('ema_20'),
                 "atr": (t.get('details') or {}).get('atr'),
+                "spread_pct": t.get("spread_pct"),
                 "breakout": t.get('breakout') or {},
                 "volume_ratio": (t.get('details') or {}).get('volume_ratio'),
                 "volume_avg_20": (t.get('details') or {}).get('volume_avg_20'),
@@ -453,8 +466,8 @@ def decide_batch(payload: AnalysisPayload):
                 "structure_break": t.get('structure_break') or {},
                 "high_20": t.get('high_20'),
                 "low_20": t.get('low_20'),
-                "last_high_15m": t.get("last_high_15m"),
-                "last_low_15m": t.get("last_low_15m"),
+                "last_high_5m": t.get("last_high_5m"),
+                "last_low_5m": t.get("last_low_5m"),
                 "macd_hist_prev": t.get("macd_hist_prev"),
                 "macd_hist_prev2": t.get("macd_hist_prev2"),
             }
@@ -479,6 +492,7 @@ PARAMETRI OTTIMIZZATI (dall'evoluzione automatica):
     - Score minimi: trend {params.get('trend_score_threshold', 0.35)} | range {params.get('range_score_threshold', 0.55)} | counter-trend {params.get('countertrend_score_threshold', 0.7)}
 - ATR SL factor: {params.get('atr_sl_factor', 1.2)} | trailing ATR: {params.get('trailing_atr_factor', 1.0)} | breakeven R: {params.get('breakeven_R', 1.0)}
 - Reverse abilitato: {params.get('reverse_enabled', True)} | Max daily trades: {params.get('max_daily_trades', 3)} | Max posizioni aperte: {params.get('max_open_positions', 3)}
+- Max spread %: {params.get('max_spread_pct', 0.0015)} | Min volume ratio: {params.get('min_volume_ratio', 0.8)} | ATR baseline: {params.get('atr_pct_baseline', 0.003)} | Dynamic hour limit: {params.get('dynamic_hour_limit', 0)}
 
 CONTROLLI DI RISCHIO ATTIVI (da Learning Agent):
 - Disable symbols: {controls.get('disable_symbols')}
@@ -521,6 +535,20 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
         open_positions_count = len(active_positions)
         limit_hour = controls.get('max_trades_per_hour') or 0
         limit_day = controls.get('max_trades_per_day') or params.get('max_daily_trades')
+        dynamic_hour_limit = int(params.get("dynamic_hour_limit", 0) or 0)
+        if limit_hour == 0 and dynamic_hour_limit > 0:
+            atr_pcts = []
+            for data in assets_summary.values():
+                price = data.get("price")
+                atr = data.get("atr")
+                if price and atr:
+                    atr_pcts.append(float(atr) / float(price))
+            if atr_pcts:
+                avg_atr_pct = sum(atr_pcts) / len(atr_pcts)
+                baseline = float(params.get("atr_pct_baseline", 0.003))
+                if baseline > 0:
+                    vol_factor = clamp(avg_atr_pct / baseline, 0.5, 2.0)
+                    limit_hour = int(max(1, dynamic_hour_limit * vol_factor))
 
         valid_decisions = []
         open_intents = []
@@ -530,12 +558,16 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             rationale_suffix = []
             score_val = d.get("score")
             tech = assets_summary.get(symbol_key, {})
+            price = tech.get("price")
+            atr_val = tech.get("atr")
+            atr_pct = float(atr_val) / float(price) if atr_val and price else None
             computed_score = weighted_score(d.get('action', ''), tech) if is_open_action(d.get('action', '')) else None
             if computed_score is not None:
                 score_val = computed_score
                 d['score'] = computed_score
             if is_open_action(d.get('action', '')):
-                d['size_pct'] = dynamic_size_pct(score_val, params)
+                d['size_pct'] = dynamic_size_pct(score_val, params, atr_pct)
+                rationale_suffix.append('limit_entry')
             # Detect textual intent even if the action is HOLD
             analysis_text = decision_json.get('analysis_summary', '') or ''
             text_block = f"{d.get('rationale','')} {analysis_text}"
@@ -550,40 +582,46 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 'score': score_val,
                 'hard_block': False,
             })
+            trend_5m = (tech.get("trend_5m") or tech.get("trend") or "").upper()
             trend_15m = (tech.get("trend_15m") or "").upper()
-            trend_1h = (tech.get("trend_1h") or "").upper()
-            price = tech.get("price")
             ema20 = tech.get("ema_20")
-            atr_val = tech.get("atr")
             structure_break = tech.get("structure_break") or {}
+            last_high_5m = tech.get("last_high_5m")
+            last_low_5m = tech.get("last_low_5m")
             rsi_val = tech.get("rsi") or tech.get("rsi_7") or 0
             rsi_extreme_long = rsi_val < 35
             rsi_extreme_short = rsi_val > 65
 
             # Dynamic sizing attiva: usa size in base alla qualità dello score
 
-            # Multi-timeframe confirmation (15m vs 1h)
-            trend_15m = (tech.get("trend_15m") or "").upper()
-            trend_1h = (tech.get("trend_1h") or "").upper()
-            price = tech.get("price")
-            ema20 = tech.get("ema_20")
-            atr_val = tech.get("atr")
+            # Multi-timeframe confirmation (5m vs 15m)
             if (
                 is_open_action(d.get('action', ''))
+                and trend_5m
                 and trend_15m
-                and trend_1h
-                and trend_15m != trend_1h
+                and trend_5m != trend_15m
                 and not rsi_extreme_long
                 and not rsi_extreme_short
             ):
+                trend_1m = (tech.get("trend_1m") or "").upper()
+                if not trend_1m or trend_1m != trend_5m:
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('mtf_trend_mismatch')
+
+            # Spread filter (avoid wide spreads for scalping)
+            spread_pct = tech.get("spread_pct")
+            if is_open_action(d.get('action', '')) and spread_pct is not None and spread_pct > params.get("max_spread_pct", 0.0015):
                 d['action'] = 'HOLD'
-                rationale_suffix.append('mtf_trend_mismatch')
+                rationale_suffix.append('spread_too_wide')
 
             # Volume filter
             vol_ratio = tech.get("volume_ratio")
-            if is_open_action(d.get('action', '')) and vol_ratio is not None and vol_ratio < 1.3:
-                d['size_pct'] = d.get('size_pct', 0.1) * 0.7
+            if is_open_action(d.get('action', '')) and vol_ratio is not None and vol_ratio < 1.1:
+                d['size_pct'] = d.get('size_pct', 0.1) * 0.8
                 rationale_suffix.append('low_volume_soft')
+            if is_open_action(d.get('action', '')) and vol_ratio is not None and vol_ratio < params.get("min_volume_ratio", 0.8):
+                d['action'] = 'HOLD'
+                rationale_suffix.append('low_liquidity')
 
             # MACD momentum filter (only strong positive blocks shorts)
             macd_hist = tech.get("macd_hist")
@@ -619,46 +657,46 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             # Transition regime gating
             regime_val = (tech.get("regime") or "").lower()
             if score_val is not None and regime_val == "range":
-                score_val *= 0.8
+                score_val *= 0.9
                 d['score'] = score_val
                 if is_open_action(d.get('action', '')):
-                    d['size_pct'] = d.get('size_pct', 0.1) * 0.7
+                    d['size_pct'] = d.get('size_pct', 0.1) * 0.85
             if (
                 is_open_action(d.get('action', ''))
                 and regime_val == "transition"
             ):
                 allow_transition = False
                 if (
-                    trend_15m == "BULLISH"
-                    and trend_1h == "BULLISH"
+                    trend_5m == "BULLISH"
+                    and trend_15m == "BULLISH"
                     and breakout_long
                     and vol_ratio is not None
-                    and vol_ratio >= 1.3
+                    and vol_ratio >= 1.1
                     and high_20 is not None
                     and price is not None
                     and price > high_20
-                    and (score_val or 0) >= params.get("transition_score_threshold", 0.35)
+                    and (score_val or 0) >= params.get("transition_score_threshold", 0.25)
                 ):
                     allow_transition = True
                 if (
-                    trend_15m == "BEARISH"
-                    and trend_1h == "BEARISH"
+                    trend_5m == "BEARISH"
+                    and trend_15m == "BEARISH"
                     and breakout_short
                     and vol_ratio is not None
-                    and vol_ratio >= 1.3
+                    and vol_ratio >= 1.1
                     and low_20 is not None
                     and price is not None
                     and price < low_20
-                    and (score_val or 0) >= params.get("transition_score_threshold", 0.35)
+                    and (score_val or 0) >= params.get("transition_score_threshold", 0.25)
                 ):
                     allow_transition = True
 
                 if not (
                     allow_transition
                     or (
-                        (score_val or 0) >= params.get("transition_score_threshold", 0.35)
+                        (score_val or 0) >= params.get("transition_score_threshold", 0.25)
                         and vol_ratio is not None
-                        and vol_ratio >= 1.3
+                        and vol_ratio >= 1.1
                         and (
                             (d.get('action') == "OPEN_LONG" and breakout_long)
                             or (d.get('action') == "OPEN_SHORT" and breakout_short)
@@ -677,14 +715,14 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             if (
                 is_open_action(d.get('action', ''))
                 and d.get('action') == "OPEN_SHORT"
-                and (trend_1h == "BEARISH" or trend_15m == "BEARISH")
+                and (trend_15m == "BEARISH" or trend_5m == "BEARISH")
                 and rsi_val < params.get("max_rsi_for_short", 50)
             ):
                 rationale_suffix.append('rsi_soft_short')
 
             # Distance from EMA20 (adaptive R/R filter) — only for counter-trend entries
             if is_open_action(d.get('action', '')) and price and ema20 and atr_val:
-                main_trend = trend_1h or trend_15m
+                main_trend = trend_15m or trend_5m
                 counter_trend = (
                     (d.get('action') == "OPEN_LONG" and main_trend == "BEARISH")
                     or (d.get('action') == "OPEN_SHORT" and main_trend == "BULLISH")
@@ -696,18 +734,18 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                     rejection_long = bool((tech.get("structure_break") or {}).get("long") or breakout_long)
                     rejection_short = bool((tech.get("structure_break") or {}).get("short") or breakout_short)
                     rejection = rejection_long if d.get('action') == "OPEN_LONG" else rejection_short
-                    trend_align = 1 if ((d.get('action') == "OPEN_LONG" and trend_15m == "BULLISH" and trend_1h == "BULLISH") or (d.get('action') == "OPEN_SHORT" and trend_15m == "BEARISH" and trend_1h == "BEARISH")) else 0
+                    trend_align = 1 if ((d.get('action') == "OPEN_LONG" and trend_5m == "BULLISH" and trend_15m == "BULLISH") or (d.get('action') == "OPEN_SHORT" and trend_5m == "BEARISH" and trend_15m == "BEARISH")) else 0
                     quality = 0.5 * (1 if rejection else 0) + 0.3 * vol_boost + 0.2 * trend_align
-                    min_dist_required = clamp(1.5 - 0.2 * quality, 1.3, 1.5)
+                    min_dist_required = clamp(1.1 - 0.2 * quality, 0.8, 1.1)
                     if dist_atr < min_dist_required:
                         d['action'] = 'HOLD'
                         rationale_suffix.append(f'distance_filter<{min_dist_required:.2f}ATR')
 
             # Pullback filter (long only)
             if is_open_action(d.get('action', '')) and d.get('action') == "OPEN_LONG" and price and ema20 and atr_val:
-                near_ema = abs(price - ema20) <= atr_val
+                near_ema = abs(price - ema20) <= (0.7 * atr_val)
                 rsi_val = tech.get("rsi") or tech.get("rsi_7") or 0
-                if not (trend_15m == "BULLISH" and near_ema and rsi_val > 38):
+                if not (trend_5m == "BULLISH" and near_ema and rsi_val > 40):
                     rationale_suffix.append('pullback_filter_fail')
                     d['action'] = 'HOLD'
 
@@ -717,14 +755,14 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 is_open_action(d.get('action', ''))
                 and d.get('action') == "OPEN_SHORT"
                 and regime_val == "trend_bear"
-                and trend_1h == "BEARISH"
                 and trend_15m == "BEARISH"
+                and trend_5m == "BEARISH"
                 and price
                 and ema20
                 and price < ema20  # sotto EMA20/50 area
                 and 35 <= (tech.get("rsi") or tech.get("rsi_7") or 0) <= 55
-                and ((tech.get("structure_break") or {}).get("short") or (last_low_15m and price < last_low_15m))
-                and (score_val or 0) >= params.get("trend_score_threshold", 0.35)
+                and ((tech.get("structure_break") or {}).get("short") or (last_low_5m and price < last_low_5m))
+                and (score_val or 0) >= params.get("trend_score_threshold", 0.25)
             ):
                 trend_pullback_short = True
                 d['path'] = "bear_pullback_short"
@@ -737,18 +775,18 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 is_open_action(d.get('action', ''))
                 and d.get('action') == "OPEN_SHORT"
                 and regime_val == "trend_bear"
-                and trend_1h == "BEARISH"
                 and trend_15m == "BEARISH"
+                and trend_5m == "BEARISH"
                 and price
                 and ema20
                 and price < ema20
                 and 25 <= (tech.get("rsi") or tech.get("rsi_7") or 0) <= 45
                 and (
-                    (last_low_15m and price < (last_low_15m - (0.10 * atr_val if atr_val else 0)))
+                    (last_low_5m and price < (last_low_5m - (0.10 * atr_val if atr_val else 0)))
                     or (low_20 is not None and price < low_20)
                 )
-                and ((vol_ratio is not None and vol_ratio >= 1.2) or breakout_short)
-                and (score_val or 0) >= params.get("trend_score_threshold", 0.35)
+                and ((vol_ratio is not None and vol_ratio >= 1.1) or breakout_short)
+                and (score_val or 0) >= params.get("trend_score_threshold", 0.25)
             ):
                 bear_continuation_short = True
                 d['path'] = "bear_continuation_short"
@@ -768,11 +806,11 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 and abs(price - ema20) >= 1.8 * atr_val
                 and (
                     (macd_prev is not None and macd_prev2 is not None and macd_hist is not None and macd_hist > macd_prev > macd_prev2)
-                    or (last_high_15m and price > (last_high_15m + 0.10 * atr_val))
+                    or (last_high_5m and price > (last_high_5m + 0.10 * atr_val))
                 )
                 and vol_ratio is not None
-                and vol_ratio >= 1.5
-                and (score_val or 0) >= params.get("countertrend_score_threshold", 0.7)
+                and vol_ratio >= 1.2
+                and (score_val or 0) >= params.get("countertrend_score_threshold", 0.60)
             ):
                 counter_trend_long = True
                 d['path'] = "counter_trend_long"
@@ -810,38 +848,38 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
 
             # Quality score: count strong conditions
             conditions_true = 0
-            if trend_15m and trend_1h and trend_15m == trend_1h:
+            if trend_15m and trend_5m and trend_15m == trend_5m:
                 conditions_true += 1
             if breakout_long and breakout_long is True and d.get('action') == "OPEN_LONG":
                 conditions_true += 1
             if breakout_short and breakout_short is True and d.get('action') == "OPEN_SHORT":
                 conditions_true += 1
-            if vol_ratio is not None and vol_ratio >= 1.3:
+            if vol_ratio is not None and vol_ratio >= 1.1:
                 conditions_true += 1
-            if price and ema20 and atr_val and abs(price - ema20) <= atr_val:
+            if price and ema20 and atr_val and abs(price - ema20) <= (0.7 * atr_val):
                 conditions_true += 1
                 if trend_pullback_short:
                     conditions_true = max(conditions_true, 3)
 
             if is_open_action(d.get('action', '')):
-                if (score_val or 0) < params.get("min_score_trade", 0.35):
+                if (score_val or 0) < params.get("min_score_trade", 0.40):
                     d['action'] = 'HOLD'
                     rationale_suffix.append('score_below_min')
                 else:
                     path_score_ok = False
-                    if counter_trend and (score_val or 0) >= params.get("countertrend_score_threshold", 0.7):
+                    if counter_trend and (score_val or 0) >= params.get("countertrend_score_threshold", 0.60):
                         path_score_ok = True
-                    elif regime_val == "transition" and (score_val or 0) >= params.get("transition_score_threshold", 0.35):
+                    elif regime_val == "transition" and (score_val or 0) >= params.get("transition_score_threshold", 0.25):
                         path_score_ok = True
                     elif rsi_extreme_long and d.get('action') == "OPEN_LONG":
                         path_score_ok = True
                     elif rsi_extreme_short and d.get('action') == "OPEN_SHORT":
                         path_score_ok = True
-                    elif not counter_trend and (score_val or 0) >= params.get("trend_score_threshold", 0.35):
+                    elif not counter_trend and (score_val or 0) >= params.get("trend_score_threshold", 0.25):
                         path_score_ok = True
 
                     # Flexible override: if score is above the global minimum, allow but trim size
-                    if not path_score_ok and (score_val or 0) >= params.get("min_score_trade", 0.35):
+                    if not path_score_ok and (score_val or 0) >= params.get("min_score_trade", 0.40):
                         path_score_ok = True
                         d['size_pct'] = d.get('size_pct', 0.1) * 0.5
                         rationale_suffix.append('flex_override')
@@ -855,19 +893,19 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 trigger_price = False
                 trigger_momentum = False
                 trigger_time = False  # placeholder
-                last_high_15m = tech.get("last_high_15m")
-                last_low_15m = tech.get("last_low_15m")
+                last_high_5m = tech.get("last_high_5m")
+                last_low_5m = tech.get("last_low_5m")
 
                 # Path-aware price triggers
                 if d.get('action') == "OPEN_LONG":
-                    if last_high_15m and price and price > last_high_15m:
+                    if last_high_5m and price and price > last_high_5m:
                         trigger_price = True
                     elif breakout_long or structure_break.get("long"):
                         trigger_price = True
                     elif rsi_extreme_long:
                         trigger_price = True  # allow extreme RSI to satisfy trigger
                 if d.get('action') == "OPEN_SHORT":
-                    if last_low_15m and price and price < last_low_15m:
+                    if last_low_5m and price and price < last_low_5m:
                         trigger_price = True
                     elif breakout_short or structure_break.get("short"):
                         trigger_price = True
@@ -885,7 +923,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
 
             # Hold quality flag
             if d.get('action') == 'HOLD':
-                if conditions_true >= 2 or (vol_ratio is not None and vol_ratio >= 1.2):
+                if conditions_true >= 2 or (vol_ratio is not None and vol_ratio >= 1.1):
                     d['hold_quality'] = "weak"
                 else:
                     d['hold_quality'] = "strong"
@@ -914,9 +952,10 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 open_intents[-1]['hard_block'] = hard_block or not is_open_action(intended)
                 if initial_action in ("OPEN_LONG", "OPEN_SHORT") and d.get('action') == 'HOLD' and not hard_block:
                     d['action'] = initial_action
-                    d['size_pct'] = dynamic_size_pct(score_val, params)
+                    d['size_pct'] = dynamic_size_pct(score_val, params, atr_pct)
                     d['hold_quality'] = None
                     rationale_suffix.append('force_open_from_ai')
+                    rationale_suffix.append('limit_entry')
 
             # Disable lists
             if symbol_key in [s.upper() for s in controls.get('disable_symbols', [])]:
@@ -1015,7 +1054,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 # Considera come blocco duro un rationale che include rejected_by
                 rationale_text = (fb_data.get('rationale') or '').lower()
                 rejected_tag = 'rejected_by' in rationale_text
-                score_floor = max(params.get('trend_score_threshold', 0.35), params.get('min_score_trade', 0.35)) + 0.1
+                score_floor = max(params.get('trend_score_threshold', 0.25), params.get('min_score_trade', 0.40)) + 0.1
                 if limit_hour and open_hour_count >= limit_hour:
                     logger.info("⚠️ Fallback bloccato: limite orario raggiunto")
                     fb_action = None
@@ -1038,7 +1077,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                         fb_data.setdefault('size_pct', params.get('size_pct', 0.15))
                         fb_data['hold_quality'] = None
                         fb_data['rationale'] = (fb_data.get('rationale') or '').strip() + " | fallback_from_analysis_intent"
-                        fb_score = best_intent.get('score') or fb_data.get('score') or params.get('min_score_trade', 0.35)
+                        fb_score = best_intent.get('score') or fb_data.get('score') or params.get('min_score_trade', 0.40)
                         # Enforce minimum score threshold to avoid low-quality forced opens
                         if fb_score < score_floor:
                             logger.info("⚠️ Fallback scartato: score sotto soglia conservativa")
