@@ -7,11 +7,23 @@ import httpx
 from decimal import Decimal, ROUND_DOWN
 from datetime import datetime
 from typing import Optional, Any, Dict, Tuple
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from pydantic import BaseModel
 from threading import Thread, Lock
 
 app = FastAPI()
+API_AUTH_TOKEN = os.getenv("POSITION_MANAGER_TOKEN", "").strip()
+
+@app.middleware("http")
+async def auth_guard(request: Request, call_next):
+    if not API_AUTH_TOKEN:
+        return await call_next(request)
+    if request.url.path in ("/docs", "/openapi.json"):
+        return await call_next(request)
+    token = request.headers.get("X-API-KEY", "")
+    if token != API_AUTH_TOKEN:
+        return Response(status_code=401, content="Unauthorized")
+    return await call_next(request)
 
 # =========================================================
 # CONFIG
@@ -59,7 +71,7 @@ QUICK_TAKE_PCT = float(os.getenv("QUICK_TAKE_PCT", "0.004"))  # take quick profi
 # --- LIMIT ENTRY ---
 LIMIT_ENTRY_ENABLED = os.getenv("LIMIT_ENTRY_ENABLED", "true").lower() == "true"
 LIMIT_ENTRY_OFFSET_PCT = float(os.getenv("LIMIT_ENTRY_OFFSET_PCT", "0.0002"))  # 0.02%
-LIMIT_ENTRY_TIMEOUT_SEC = float(os.getenv("LIMIT_ENTRY_TIMEOUT_SEC", "5"))
+LIMIT_ENTRY_TIMEOUT_SEC = float(os.getenv("LIMIT_ENTRY_TIMEOUT_SEC", "10"))
 LIMIT_ENTRY_FALLBACK_MARKET = os.getenv("LIMIT_ENTRY_FALLBACK_MARKET", "false").lower() == "true"
 # --- TIME-BASED EXIT ---
 TIME_EXIT_BARS = int(os.getenv("TIME_EXIT_BARS", "8"))
@@ -952,9 +964,11 @@ def execute_reverse(symbol: str, current_side_raw: str, recovery_size_pct: float
 
         pos_idx = direction_to_position_idx(new_dir)
 
+        limit_price = compute_limit_entry_price(new_side, bid, ask)
+        limit_log = f"{limit_price:.6f}" if limit_price else "n/a"
         print(
             f"🔄 REVERSE {sym_ccxt}: {current_dir} -> {new_dir}, "
-            f"size={recovery_size_pct*100:.1f}%, qty={final_qty}, idx={pos_idx}"
+            f"size={recovery_size_pct*100:.1f}%, qty={final_qty}, idx={pos_idx}, limit={limit_log}"
         )
 
         params = {"category": "linear", "stopLoss": sl_str}
@@ -963,7 +977,6 @@ def execute_reverse(symbol: str, current_side_raw: str, recovery_size_pct: float
         if HEDGE_MODE:
             params["positionIdx"] = pos_idx
 
-        limit_price = compute_limit_entry_price(new_side, bid, ask)
         res = place_entry_order(sym_ccxt, new_side, final_qty, limit_price, params)
         if TP_PARTIAL_ENABLED and tp_price:
             partial_price = compute_take_profit_price(
@@ -1480,7 +1493,9 @@ def open_position(order: OrderRequest):
         pos_idx = direction_to_position_idx(requested_dir)
 
         tp_log = tp_str if tp_str else "n/a"
-        print(f"🚀 ORDER {sym_ccxt}: side={requested_side} qty={final_qty} SL={sl_str} TP={tp_log} idx={pos_idx}")
+        limit_price = compute_limit_entry_price(requested_side, bid, ask)
+        limit_log = f"{limit_price:.6f}" if limit_price else "n/a"
+        print(f"🚀 ORDER {sym_ccxt}: side={requested_side} qty={final_qty} SL={sl_str} TP={tp_log} idx={pos_idx} limit={limit_log}")
 
         params = {"category": "linear", "stopLoss": sl_str}
         if tp_str:
@@ -1488,7 +1503,6 @@ def open_position(order: OrderRequest):
         if HEDGE_MODE:
             params["positionIdx"] = pos_idx
 
-        limit_price = compute_limit_entry_price(requested_side, bid, ask)
         res = place_entry_order(sym_ccxt, requested_side, final_qty, limit_price, params)
         if TP_PARTIAL_ENABLED and tp_price:
             partial_price = compute_take_profit_price(
