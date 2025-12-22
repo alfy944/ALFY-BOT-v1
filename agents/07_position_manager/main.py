@@ -56,6 +56,11 @@ PROFIT_LOCK_PCT = float(os.getenv("PROFIT_LOCK_PCT", "0.012"))  # lock gains aft
 PROFIT_LOCK_KEEP_PCT = float(os.getenv("PROFIT_LOCK_KEEP_PCT", "0.004"))  # keep at least 0.4%
 # --- QUICK PROFIT EXIT ---
 QUICK_TAKE_PCT = float(os.getenv("QUICK_TAKE_PCT", "0.003"))  # take quick profits after 0.3%
+# --- LIMIT ENTRY ---
+LIMIT_ENTRY_ENABLED = os.getenv("LIMIT_ENTRY_ENABLED", "true").lower() == "true"
+LIMIT_ENTRY_OFFSET_PCT = float(os.getenv("LIMIT_ENTRY_OFFSET_PCT", "0.0002"))  # 0.02%
+LIMIT_ENTRY_TIMEOUT_SEC = float(os.getenv("LIMIT_ENTRY_TIMEOUT_SEC", "3"))
+LIMIT_ENTRY_FALLBACK_MARKET = os.getenv("LIMIT_ENTRY_FALLBACK_MARKET", "true").lower() == "true"
 # --- TIME-BASED EXIT ---
 TIME_EXIT_BARS = int(os.getenv("TIME_EXIT_BARS", "8"))
 TIME_EXIT_INTERVAL_MIN = int(os.getenv("TIME_EXIT_INTERVAL_MIN", "5"))
@@ -200,6 +205,47 @@ def compute_micro_sl_price(
     if direction == "short" and last_high_1m:
         return max(last_high_1m + buffer_val, 0)
     return None
+
+def compute_limit_entry_price(side: str, bid: float, ask: float) -> Optional[float]:
+    if bid <= 0 or ask <= 0:
+        return None
+    if side == "buy":
+        return bid * (1 - LIMIT_ENTRY_OFFSET_PCT)
+    if side == "sell":
+        return ask * (1 + LIMIT_ENTRY_OFFSET_PCT)
+    return None
+
+def place_entry_order(
+    sym_ccxt: str,
+    side: str,
+    qty: float,
+    limit_price: Optional[float],
+    params: Dict[str, Any],
+) -> Dict[str, Any]:
+    if LIMIT_ENTRY_ENABLED and limit_price:
+        limit_str = exchange.price_to_precision(sym_ccxt, limit_price)
+        limit_params = params.copy()
+        limit_params["timeInForce"] = "PostOnly"
+        order = exchange.create_order(sym_ccxt, "limit", side, qty, price=limit_str, params=limit_params)
+        if LIMIT_ENTRY_TIMEOUT_SEC <= 0:
+            return order
+        deadline = time.time() + LIMIT_ENTRY_TIMEOUT_SEC
+        while time.time() < deadline:
+            time.sleep(0.2)
+            try:
+                status = exchange.fetch_order(order.get("id"), sym_ccxt)
+                if status and status.get("status") in ("closed", "filled"):
+                    return status
+            except Exception:
+                continue
+        try:
+            exchange.cancel_order(order.get("id"), sym_ccxt)
+        except Exception:
+            pass
+        if LIMIT_ENTRY_FALLBACK_MARKET:
+            return exchange.create_order(sym_ccxt, "market", side, qty, params=params)
+        return order
+    return exchange.create_order(sym_ccxt, "market", side, qty, params=params)
 
 def side_to_order_side(direction: str) -> str:
     """
@@ -853,7 +899,10 @@ def execute_reverse(symbol: str, current_side_raw: str, recovery_size_pct: float
 
         bal = exchange.fetch_balance(params={"type": "swap"})
         free_balance = to_float((bal.get("USDT", {}) or {}).get("free", 0.0), 0.0)
-        price = to_float(exchange.fetch_ticker(sym_ccxt).get("last"), 0.0)
+        ticker = exchange.fetch_ticker(sym_ccxt) or {}
+        price = to_float(ticker.get("last"), 0.0)
+        bid = to_float(ticker.get("bid"), 0.0)
+        ask = to_float(ticker.get("ask"), 0.0)
         if price <= 0:
             print("❌ Prezzo non valido per reverse")
             return False
@@ -914,7 +963,8 @@ def execute_reverse(symbol: str, current_side_raw: str, recovery_size_pct: float
         if HEDGE_MODE:
             params["positionIdx"] = pos_idx
 
-        res = exchange.create_order(sym_ccxt, "market", new_side, final_qty, params=params)
+        limit_price = compute_limit_entry_price(new_side, bid, ask)
+        res = place_entry_order(sym_ccxt, new_side, final_qty, limit_price, params)
         if TP_PARTIAL_ENABLED and tp_price:
             partial_price = compute_take_profit_price(
                 price,
@@ -1387,7 +1437,10 @@ def open_position(order: OrderRequest):
         bal = exchange.fetch_balance(params={"type": "swap"})
         free_usdt = to_float((bal.get("USDT", {}) or {}).get("free", 0.0), 0.0)
         cost = max(free_usdt * float(order.size_pct), 10.0)
-        price = to_float(exchange.fetch_ticker(sym_ccxt).get("last"), 0.0)
+        ticker = exchange.fetch_ticker(sym_ccxt) or {}
+        price = to_float(ticker.get("last"), 0.0)
+        bid = to_float(ticker.get("bid"), 0.0)
+        ask = to_float(ticker.get("ask"), 0.0)
         if price <= 0:
             return {"status": "error", "msg": "Invalid price"}
 
@@ -1435,7 +1488,8 @@ def open_position(order: OrderRequest):
         if HEDGE_MODE:
             params["positionIdx"] = pos_idx
 
-        res = exchange.create_order(sym_ccxt, "market", requested_side, final_qty, params=params)
+        limit_price = compute_limit_entry_price(requested_side, bid, ask)
+        res = place_entry_order(sym_ccxt, requested_side, final_qty, limit_price, params)
         if TP_PARTIAL_ENABLED and tp_price:
             partial_price = compute_take_profit_price(
                 price,
