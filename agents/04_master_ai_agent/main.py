@@ -564,6 +564,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 d['score'] = computed_score
             if is_open_action(d.get('action', '')):
                 d['size_pct'] = dynamic_size_pct(score_val, params, atr_pct)
+                rationale_suffix.append('limit_entry')
             # Detect textual intent even if the action is HOLD
             analysis_text = decision_json.get('analysis_summary', '') or ''
             text_block = f"{d.get('rationale','')} {analysis_text}"
@@ -606,12 +607,6 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 if not trend_1m or trend_1m != trend_5m:
                     d['action'] = 'HOLD'
                     rationale_suffix.append('mtf_trend_mismatch')
-
-            # Spread filter (avoid wide spreads for scalping)
-            spread_pct = tech.get("spread_pct")
-            if is_open_action(d.get('action', '')) and spread_pct is not None and spread_pct > params.get("max_spread_pct", 0.0015):
-                d['action'] = 'HOLD'
-                rationale_suffix.append('spread_too_wide')
 
             # Spread filter (avoid wide spreads for scalping)
             spread_pct = tech.get("spread_pct")
@@ -960,6 +955,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                     d['size_pct'] = dynamic_size_pct(score_val, params, atr_pct)
                     d['hold_quality'] = None
                     rationale_suffix.append('force_open_from_ai')
+                    rationale_suffix.append('limit_entry')
 
             # Disable lists
             if symbol_key in [s.upper() for s in controls.get('disable_symbols', [])]:

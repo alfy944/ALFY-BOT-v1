@@ -43,7 +43,7 @@ DEFAULT_INITIAL_SL_PCT = float(os.getenv("DEFAULT_INITIAL_SL_PCT", "0.012"))  # 
 TP_ATR_MULTIPLIER = float(os.getenv("TP_ATR_MULTIPLIER", "1.8"))
 TP_FALLBACK_PCT = float(os.getenv("TP_FALLBACK_PCT", "0.008"))  # 0.8%
 TP_FEE_BUFFER_PCT = float(os.getenv("TP_FEE_BUFFER_PCT", "0.0012"))  # 0.12%
-TOTAL_FEE_PCT = float(os.getenv("TOTAL_FEE_PCT", "0.002"))  # optional override: taker+maker+slippage
+TOTAL_FEE_PCT = float(os.getenv("TOTAL_FEE_PCT", "0.0025"))  # optional override: taker+maker+slippage
 TP_PARTIAL_ENABLED = os.getenv("TP_PARTIAL_ENABLED", "false").lower() == "true"
 TP_PARTIAL_PCT = float(os.getenv("TP_PARTIAL_PCT", "0.5"))
 TP_PARTIAL_ATR_MULTIPLIER = float(os.getenv("TP_PARTIAL_ATR_MULTIPLIER", "1.0"))
@@ -55,12 +55,12 @@ BE_FEE_BUFFER_PCT = float(os.getenv("BE_FEE_BUFFER_PCT", "0.0008"))  # offset BE
 PROFIT_LOCK_PCT = float(os.getenv("PROFIT_LOCK_PCT", "0.012"))  # lock gains after 1.2% move
 PROFIT_LOCK_KEEP_PCT = float(os.getenv("PROFIT_LOCK_KEEP_PCT", "0.004"))  # keep at least 0.4%
 # --- QUICK PROFIT EXIT ---
-QUICK_TAKE_PCT = float(os.getenv("QUICK_TAKE_PCT", "0.003"))  # take quick profits after 0.3%
+QUICK_TAKE_PCT = float(os.getenv("QUICK_TAKE_PCT", "0.004"))  # take quick profits after 0.4%
 # --- LIMIT ENTRY ---
 LIMIT_ENTRY_ENABLED = os.getenv("LIMIT_ENTRY_ENABLED", "true").lower() == "true"
 LIMIT_ENTRY_OFFSET_PCT = float(os.getenv("LIMIT_ENTRY_OFFSET_PCT", "0.0002"))  # 0.02%
-LIMIT_ENTRY_TIMEOUT_SEC = float(os.getenv("LIMIT_ENTRY_TIMEOUT_SEC", "3"))
-LIMIT_ENTRY_FALLBACK_MARKET = os.getenv("LIMIT_ENTRY_FALLBACK_MARKET", "true").lower() == "true"
+LIMIT_ENTRY_TIMEOUT_SEC = float(os.getenv("LIMIT_ENTRY_TIMEOUT_SEC", "5"))
+LIMIT_ENTRY_FALLBACK_MARKET = os.getenv("LIMIT_ENTRY_FALLBACK_MARKET", "false").lower() == "true"
 # --- TIME-BASED EXIT ---
 TIME_EXIT_BARS = int(os.getenv("TIME_EXIT_BARS", "8"))
 TIME_EXIT_INTERVAL_MIN = int(os.getenv("TIME_EXIT_INTERVAL_MIN", "5"))
