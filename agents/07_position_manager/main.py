@@ -915,13 +915,13 @@ def execute_close_position(symbol: str) -> bool:
             cooldowns[sym_id] = now_ts
 
             save_json(COOLDOWN_FILE, cooldowns)
-        print(f"💾 Cooldown salvato per {direction_key}")
-        record_order_intent({
-            "event": "cooldown_saved",
-            "symbol": sym_ccxt,
-            "side": side_dir,
-            "reason": direction_key,
-        })
+            print(f"💾 Cooldown salvato per {direction_key}")
+            record_order_intent({
+                "event": "cooldown_saved",
+                "symbol": sym_ccxt,
+                "side": side_dir,
+                "reason": direction_key,
+            })
         except Exception as e:
             print(f"⚠️ Errore salvataggio cooldown: {e}")
 
