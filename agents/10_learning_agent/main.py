@@ -47,8 +47,8 @@ DEFAULT_PARAMS = {
     "breakeven_R": 0.6,
     "reverse_enabled": False,
     "max_daily_trades": 0,
-    "max_spread_pct": 0.0015,
-    "min_volume_ratio": 0.8,
+    "max_spread_pct": 0.0008,
+    "min_volume_ratio": 1.2,
     "atr_pct_baseline": 0.003,
     "dynamic_hour_limit": 0,
 }
@@ -438,9 +438,9 @@ def parse_suggestions(suggestions_json: str) -> Dict[str, Any]:
         if "max_daily_trades" in suggested_params:
             params["max_daily_trades"] = max(0, min(25, suggested_params["max_daily_trades"]))
         if "max_spread_pct" in suggested_params:
-            params["max_spread_pct"] = max(0.0005, min(0.005, suggested_params["max_spread_pct"]))
+            params["max_spread_pct"] = max(0.0005, min(0.002, suggested_params["max_spread_pct"]))
         if "min_volume_ratio" in suggested_params:
-            params["min_volume_ratio"] = max(0.3, min(2.0, suggested_params["min_volume_ratio"]))
+            params["min_volume_ratio"] = max(0.8, min(2.0, suggested_params["min_volume_ratio"]))
         if "atr_pct_baseline" in suggested_params:
             params["atr_pct_baseline"] = max(0.001, min(0.01, suggested_params["atr_pct_baseline"]))
         if "dynamic_hour_limit" in suggested_params:

@@ -48,8 +48,8 @@ DEFAULT_PARAMS = {
     "reverse_enabled": False,
     "max_daily_trades": 0,
     "max_open_positions": 4,
-    "max_spread_pct": 0.0015,
-    "min_volume_ratio": 0.8,
+    "max_spread_pct": 0.0008,
+    "min_volume_ratio": 1.2,
     "atr_pct_baseline": 0.003,
     "dynamic_hour_limit": 0,
 }

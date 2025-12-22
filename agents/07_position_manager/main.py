@@ -40,11 +40,11 @@ TECHNICAL_ANALYZER_URL = os.getenv("TECHNICAL_ANALYZER_URL", "http://01_technica
 FALLBACK_TRAILING_PCT = float(os.getenv("FALLBACK_TRAILING_PCT", "0.012"))  # 1.2%
 DEFAULT_INITIAL_SL_PCT = float(os.getenv("DEFAULT_INITIAL_SL_PCT", "0.012"))  # 1.2%
 # --- TAKE PROFIT (fee-aware) ---
-TP_ATR_MULTIPLIER = float(os.getenv("TP_ATR_MULTIPLIER", "1.5"))
-TP_FALLBACK_PCT = float(os.getenv("TP_FALLBACK_PCT", "0.006"))  # 0.6%
+TP_ATR_MULTIPLIER = float(os.getenv("TP_ATR_MULTIPLIER", "1.8"))
+TP_FALLBACK_PCT = float(os.getenv("TP_FALLBACK_PCT", "0.008"))  # 0.8%
 TP_FEE_BUFFER_PCT = float(os.getenv("TP_FEE_BUFFER_PCT", "0.0012"))  # 0.12%
-TOTAL_FEE_PCT = float(os.getenv("TOTAL_FEE_PCT", "0.0"))  # optional override: taker+maker+slippage
-TP_PARTIAL_ENABLED = os.getenv("TP_PARTIAL_ENABLED", "true").lower() == "true"
+TOTAL_FEE_PCT = float(os.getenv("TOTAL_FEE_PCT", "0.002"))  # optional override: taker+maker+slippage
+TP_PARTIAL_ENABLED = os.getenv("TP_PARTIAL_ENABLED", "false").lower() == "true"
 TP_PARTIAL_PCT = float(os.getenv("TP_PARTIAL_PCT", "0.5"))
 TP_PARTIAL_ATR_MULTIPLIER = float(os.getenv("TP_PARTIAL_ATR_MULTIPLIER", "1.0"))
 MICRO_SL_BUFFER_ATR = float(os.getenv("MICRO_SL_BUFFER_ATR", "0.1"))
