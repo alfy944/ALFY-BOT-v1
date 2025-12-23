@@ -37,6 +37,20 @@ class CryptoTechnicalAnalysisBybit:
             print(f"Error fetching {symbol}: {e}")
             return pd.DataFrame()
 
+    def fetch_ticker(self, coin: str) -> Dict:
+        symbol = coin.replace("-", "").upper()
+        if "USDT" not in symbol:
+            symbol += "USDT"
+        try:
+            resp = self.session.get_tickers(category="linear", symbol=symbol)
+            if resp["retCode"] != 0:
+                raise Exception(resp["retMsg"])
+            items = resp.get("result", {}).get("list", []) or []
+            return items[0] if items else {}
+        except Exception as e:
+            print(f"Error fetching ticker {symbol}: {e}")
+            return {}
+
     def calculate_ema(self, data: pd.Series, period: int) -> pd.Series:
         return ta.trend.EMAIndicator(data, window=period).ema_indicator()
 
@@ -61,16 +75,27 @@ class CryptoTechnicalAnalysisBybit:
         }
 
     def get_complete_analysis(self, ticker: str) -> Dict:
-        df = self.fetch_ohlcv(ticker, "15m", limit=200)
+        df = self.fetch_ohlcv(ticker, "5m", limit=200)
         if df.empty: return {}
 
-        # Multi-timeframe 1h per conferma trend
-        df_1h = self.fetch_ohlcv(ticker, "1h", limit=200)
-        trend_1h = None
-        if not df_1h.empty and len(df_1h) >= 50:
-            df_1h["ema_50"] = self.calculate_ema(df_1h["close"], 50)
-            last_1h = df_1h.iloc[-1]
-            trend_1h = "BULLISH" if last_1h["close"] > last_1h["ema_50"] else "BEARISH"
+        # Multi-timeframe for scalping (1m -> 5m -> 15m)
+        df_1m = self.fetch_ohlcv(ticker, "1m", limit=200)
+        trend_1m = None
+        last_high_1m = None
+        last_low_1m = None
+        if not df_1m.empty and len(df_1m) >= 50:
+            df_1m["ema_50"] = self.calculate_ema(df_1m["close"], 50)
+            last_1m = df_1m.iloc[-1]
+            trend_1m = "BULLISH" if last_1m["close"] > last_1m["ema_50"] else "BEARISH"
+            last_high_1m = float(last_1m["high"])
+            last_low_1m = float(last_1m["low"])
+
+        df_15m = self.fetch_ohlcv(ticker, "15m", limit=200)
+        trend_15m = None
+        if not df_15m.empty and len(df_15m) >= 50:
+            df_15m["ema_50"] = self.calculate_ema(df_15m["close"], 50)
+            last_15m = df_15m.iloc[-1]
+            trend_15m = "BULLISH" if last_15m["close"] > last_15m["ema_50"] else "BEARISH"
 
         df["ema_20"] = self.calculate_ema(df["close"], 20)
         df["ema_50"] = self.calculate_ema(df["close"], 50)
@@ -103,9 +128,8 @@ class CryptoTechnicalAnalysisBybit:
         volume_ratio = (last["volume"] / avg_volume) if avg_volume else 0
         volume_spike = pd.notna(avg_volume) and last["volume"] > (avg_volume * 1.5)
 
-        trend = "BULLISH" if last["close"] > last["ema_50"] else "BEARISH"
+        trend_5m = "BULLISH" if last["close"] > last["ema_50"] else "BEARISH"
         macd_trend = "POSITIVE" if last["macd_line"] > last["macd_signal"] else "NEGATIVE"
-        trend_15m = trend
 
         atr_value = last["atr_14"]
         if pd.isna(atr_value) or atr_value <= 0:
@@ -129,7 +153,7 @@ class CryptoTechnicalAnalysisBybit:
             regime = "trend_bull"
         elif ema20 < ema50 < ema200:
             regime = "trend_bear"
-        elif (trend == "BULLISH" and macd_trend == "NEGATIVE") or (trend == "BEARISH" and macd_trend == "POSITIVE"):
+        elif (trend_5m == "BULLISH" and macd_trend == "NEGATIVE") or (trend_5m == "BEARISH" and macd_trend == "POSITIVE"):
             regime = "transition"
         else:
             regime = "transition"
@@ -147,8 +171,14 @@ class CryptoTechnicalAnalysisBybit:
         long_exit_votes = sum([bool(rsi_below_50), bool(macd_hist_falling), bool(close_below_ema20)])
         short_exit_votes = sum([bool(rsi_above_50), bool(macd_hist_rising), bool(close_above_ema20)])
 
-        last_high_15m = float(last["high"])
-        last_low_15m = float(last["low"])
+        last_high_5m = float(last["high"])
+        last_low_5m = float(last["low"])
+
+        ticker_data = self.fetch_ticker(ticker)
+        bid = float(ticker_data.get("bid1Price") or 0)
+        ask = float(ticker_data.get("ask1Price") or 0)
+        mid = (bid + ask) / 2 if bid and ask else last["close"]
+        spread_pct = ((ask - bid) / mid) if bid and ask and mid else 0
 
         breakout_long = False
         breakout_short = False
@@ -159,9 +189,10 @@ class CryptoTechnicalAnalysisBybit:
         return {
             "symbol": ticker,
             "price": last["close"],
-            "trend": trend,
+            "trend": trend_5m,
+            "trend_1m": trend_1m,
+            "trend_5m": trend_5m,
             "trend_15m": trend_15m,
-            "trend_1h": trend_1h,
             "regime": regime,
             "volatility": volatility,
             "rsi": round(last["rsi_14"], 2),
@@ -176,10 +207,13 @@ class CryptoTechnicalAnalysisBybit:
                 "long": bool(breakout_long),
                 "short": bool(breakout_short),
             },
-            "last_high_15m": last_high_15m,
-            "last_low_15m": last_low_15m,
+            "last_high_1m": last_high_1m,
+            "last_low_1m": last_low_1m,
+            "last_high_5m": last_high_5m,
+            "last_low_5m": last_low_5m,
             "high_20": round(high_20, 4) if pd.notna(high_20) else None,
             "low_20": round(low_20, 4) if pd.notna(low_20) else None,
+            "spread_pct": round(spread_pct, 6),
             "structure_break": {
                 "long": bool(swing_high and last["close"] > swing_high),
                 "short": bool(swing_low and last["close"] < swing_low),

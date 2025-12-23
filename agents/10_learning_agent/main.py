@@ -32,28 +32,32 @@ API_COSTS_FILE = f"{DATA_DIR}/api_costs.json"
 
 # Default parameters
 DEFAULT_PARAMS = {
-    "rsi_overbought": 70,
-    "rsi_oversold": 30,
-    "default_leverage": 5,
-    "size_pct": 0.15,
-    "reverse_threshold": 2.0,
-    "atr_multiplier_sl": 2.0,
-    "atr_multiplier_tp": 3.0,
-    "min_rsi_for_long": 40,
-    "max_rsi_for_short": 60,
-    "min_score_trade": 0.6,
-    "atr_sl_factor": 1.2,
-    "trailing_atr_factor": 1.0,
-    "breakeven_R": 1.0,
-    "reverse_enabled": True,
-    "max_daily_trades": 3,
+    "rsi_overbought": 68,
+    "rsi_oversold": 32,
+    "default_leverage": 6,
+    "size_pct": 0.10,
+    "reverse_threshold": 0.8,
+    "atr_multiplier_sl": 1.0,
+    "atr_multiplier_tp": 1.8,
+    "min_rsi_for_long": 45,
+    "max_rsi_for_short": 55,
+    "min_score_trade": 0.45,
+    "atr_sl_factor": 1.0,
+    "trailing_atr_factor": 0.7,
+    "breakeven_R": 0.6,
+    "reverse_enabled": False,
+    "max_daily_trades": 0,
+    "max_spread_pct": 0.0008,
+    "min_volume_ratio": 1.2,
+    "atr_pct_baseline": 0.003,
+    "dynamic_hour_limit": 0,
 }
 
 DEFAULT_CONTROLS = {
     "disable_symbols": [],
     "disable_regimes": [],
-    "max_trades_per_hour": 0,
-    "cooldown_minutes": 0,
+    "max_trades_per_hour": 6,
+    "cooldown_minutes": 3,
     "safe_mode": False,
     "max_trades_per_day": None,
     "size_cap": None,
@@ -422,17 +426,25 @@ def parse_suggestions(suggestions_json: str) -> Dict[str, Any]:
         if "max_rsi_for_short" in suggested_params:
             params["max_rsi_for_short"] = max(50, min(70, suggested_params["max_rsi_for_short"]))
         if "min_score_trade" in suggested_params:
-            params["min_score_trade"] = max(0.55, min(0.75, suggested_params["min_score_trade"]))
+            params["min_score_trade"] = max(0.4, min(0.7, suggested_params["min_score_trade"]))
         if "atr_sl_factor" in suggested_params:
             params["atr_sl_factor"] = max(1.0, min(1.8, suggested_params["atr_sl_factor"]))
         if "trailing_atr_factor" in suggested_params:
-            params["trailing_atr_factor"] = max(0.8, min(1.5, suggested_params["trailing_atr_factor"]))
+            params["trailing_atr_factor"] = max(0.5, min(1.2, suggested_params["trailing_atr_factor"]))
         if "breakeven_R" in suggested_params:
-            params["breakeven_R"] = max(0.8, min(1.5, suggested_params["breakeven_R"]))
+            params["breakeven_R"] = max(0.5, min(1.2, suggested_params["breakeven_R"]))
         if "reverse_enabled" in suggested_params:
             params["reverse_enabled"] = bool(suggested_params["reverse_enabled"])
         if "max_daily_trades" in suggested_params:
-            params["max_daily_trades"] = max(1, min(5, suggested_params["max_daily_trades"]))
+            params["max_daily_trades"] = max(0, min(25, suggested_params["max_daily_trades"]))
+        if "max_spread_pct" in suggested_params:
+            params["max_spread_pct"] = max(0.0005, min(0.002, suggested_params["max_spread_pct"]))
+        if "min_volume_ratio" in suggested_params:
+            params["min_volume_ratio"] = max(0.8, min(2.0, suggested_params["min_volume_ratio"]))
+        if "atr_pct_baseline" in suggested_params:
+            params["atr_pct_baseline"] = max(0.001, min(0.01, suggested_params["atr_pct_baseline"]))
+        if "dynamic_hour_limit" in suggested_params:
+            params["dynamic_hour_limit"] = max(0, min(200, suggested_params["dynamic_hour_limit"]))
 
         controls = DEFAULT_CONTROLS.copy()
         if "disable_symbols" in suggested_controls:
