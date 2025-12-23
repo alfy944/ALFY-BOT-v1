@@ -1216,6 +1216,9 @@ st.markdown("### 📌 Ordini Inviati (Limit/Market)")
 order_intents = get_order_intents()
 if order_intents:
     df_orders = pd.DataFrame(order_intents)
+    order_id_columns = [col for col in df_orders.columns if col.lower() in {"order_id", "orderid"}]
+    if order_id_columns:
+        df_orders = df_orders.drop(columns=order_id_columns)
     if "timestamp" in df_orders.columns:
         df_orders["timestamp"] = df_orders["timestamp"].astype(str).str.replace("T", " ").str[:19]
     st.dataframe(

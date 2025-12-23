@@ -749,6 +749,14 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                     rationale_suffix.append('pullback_filter_fail')
                     d['action'] = 'HOLD'
 
+            # Pullback filter (short only)
+            if is_open_action(d.get('action', '')) and d.get('action') == "OPEN_SHORT" and price and ema20 and atr_val:
+                near_ema = abs(price - ema20) <= (0.7 * atr_val)
+                rsi_val = tech.get("rsi") or tech.get("rsi_7") or 0
+                if not (trend_5m == "BEARISH" and near_ema and rsi_val < 60):
+                    rationale_suffix.append('pullback_filter_fail')
+                    d['action'] = 'HOLD'
+
             # Trend pullback short (allows neutral momentum)
             trend_pullback_short = False
             if (
@@ -920,6 +928,26 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 if not (trigger_price or trigger_momentum or trigger_time):
                     d['action'] = 'HOLD'
                     rationale_suffix.append('no_entry_trigger')
+
+            # Quality floor: avoid marginal setups unless score is strong
+            if is_open_action(d.get('action', '')) and d['action'] != 'HOLD':
+                strong_score = max(params.get("min_score_trade", 0.40) + 0.15, 0.60)
+                if conditions_true < 2 and (score_val or 0) < strong_score:
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('quality_floor')
+
+            # 1m vs 5m timing: require micro trend alignment unless breakout/structure
+            if is_open_action(d.get('action', '')) and d['action'] != 'HOLD':
+                trend_1m = (tech.get("trend_1m") or "").upper()
+                if trend_1m and trend_5m and trend_1m != trend_5m:
+                    allow_micro_mismatch = bool(
+                        (d.get('action') == "OPEN_LONG" and (breakout_long or structure_break.get("long")))
+                        or (d.get('action') == "OPEN_SHORT" and (breakout_short or structure_break.get("short")))
+                        or macd_improving
+                    )
+                    if not allow_micro_mismatch:
+                        d['action'] = 'HOLD'
+                        rationale_suffix.append('micro_trend_mismatch')
 
             # Hold quality flag
             if d.get('action') == 'HOLD':
