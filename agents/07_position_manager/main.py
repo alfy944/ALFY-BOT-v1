@@ -50,7 +50,7 @@ ATR_MULTIPLIERS = {
 }
 TECHNICAL_ANALYZER_URL = os.getenv("TECHNICAL_ANALYZER_URL", "http://01_technical_analyzer:8000").strip()
 FALLBACK_TRAILING_PCT = float(os.getenv("FALLBACK_TRAILING_PCT", "0.012"))  # 1.2%
-DEFAULT_INITIAL_SL_PCT = float(os.getenv("DEFAULT_INITIAL_SL_PCT", "0.012"))  # 1.2%
+DEFAULT_INITIAL_SL_PCT = float(os.getenv("DEFAULT_INITIAL_SL_PCT", "0.009"))  # 0.9%
 # --- TAKE PROFIT (fee-aware) ---
 TP_ATR_MULTIPLIER = float(os.getenv("TP_ATR_MULTIPLIER", "1.8"))
 TP_FALLBACK_PCT = float(os.getenv("TP_FALLBACK_PCT", "0.008"))  # 0.8%
@@ -61,13 +61,13 @@ TP_PARTIAL_PCT = float(os.getenv("TP_PARTIAL_PCT", "0.5"))
 TP_PARTIAL_ATR_MULTIPLIER = float(os.getenv("TP_PARTIAL_ATR_MULTIPLIER", "1.0"))
 MICRO_SL_BUFFER_ATR = float(os.getenv("MICRO_SL_BUFFER_ATR", "0.1"))
 # --- BREAK-EVEN BUFFER ---
-BE_MIN_R = float(os.getenv("BE_MIN_R", "0.05"))  # require at least 0.05R before BE triggers
+BE_MIN_R = float(os.getenv("BE_MIN_R", "0.03"))  # require at least 0.03R before BE triggers
 BE_FEE_BUFFER_PCT = float(os.getenv("BE_FEE_BUFFER_PCT", "0.0008"))  # offset BE to cover taker+slippage
 # --- PROFIT LOCK ---
-PROFIT_LOCK_PCT = float(os.getenv("PROFIT_LOCK_PCT", "0.012"))  # lock gains after 1.2% move
-PROFIT_LOCK_KEEP_PCT = float(os.getenv("PROFIT_LOCK_KEEP_PCT", "0.004"))  # keep at least 0.4%
+PROFIT_LOCK_PCT = float(os.getenv("PROFIT_LOCK_PCT", "0.016"))  # lock gains after 1.6% move
+PROFIT_LOCK_KEEP_PCT = float(os.getenv("PROFIT_LOCK_KEEP_PCT", "0.006"))  # keep at least 0.6%
 # --- QUICK PROFIT EXIT ---
-QUICK_TAKE_PCT = float(os.getenv("QUICK_TAKE_PCT", "0.004"))  # take quick profits after 0.4%
+QUICK_TAKE_PCT = float(os.getenv("QUICK_TAKE_PCT", "0.006"))  # take quick profits after 0.6%
 # --- LIMIT ENTRY ---
 LIMIT_ENTRY_ENABLED = os.getenv("LIMIT_ENTRY_ENABLED", "true").lower() == "true"
 LIMIT_ENTRY_OFFSET_PCT = float(os.getenv("LIMIT_ENTRY_OFFSET_PCT", "0.0002"))  # 0.02%
