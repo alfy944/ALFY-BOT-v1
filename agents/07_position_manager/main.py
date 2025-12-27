@@ -73,6 +73,9 @@ LIMIT_ENTRY_ENABLED = os.getenv("LIMIT_ENTRY_ENABLED", "true").lower() == "true"
 LIMIT_ENTRY_OFFSET_PCT = float(os.getenv("LIMIT_ENTRY_OFFSET_PCT", "0.0002"))  # 0.02%
 LIMIT_ENTRY_TIMEOUT_SEC = float(os.getenv("LIMIT_ENTRY_TIMEOUT_SEC", "10"))
 LIMIT_ENTRY_FALLBACK_MARKET = os.getenv("LIMIT_ENTRY_FALLBACK_MARKET", "false").lower() == "true"
+# --- ENTRY QUALITY FILTERS ---
+MAX_ENTRY_SPREAD_PCT = float(os.getenv("MAX_ENTRY_SPREAD_PCT", "0.001"))
+MIN_ENTRY_VOLUME_RATIO = float(os.getenv("MIN_ENTRY_VOLUME_RATIO", "1.1"))
 # --- TIME-BASED EXIT ---
 TIME_EXIT_BARS = int(os.getenv("TIME_EXIT_BARS", "8"))
 TIME_EXIT_INTERVAL_MIN = int(os.getenv("TIME_EXIT_INTERVAL_MIN", "5"))
@@ -87,7 +90,7 @@ WARNING_THRESHOLD = float(os.getenv("WARNING_THRESHOLD", "-0.05"))
 AI_REVIEW_THRESHOLD = float(os.getenv("AI_REVIEW_THRESHOLD", "-0.08"))
 REVERSE_THRESHOLD = float(os.getenv("REVERSE_THRESHOLD", "-0.10"))
 HARD_STOP_THRESHOLD = float(os.getenv("HARD_STOP_THRESHOLD", "-0.03"))
-LOSS_COOLDOWN_MINUTES = int(os.getenv("LOSS_COOLDOWN_MINUTES", "0"))
+LOSS_COOLDOWN_MINUTES = int(os.getenv("LOSS_COOLDOWN_MINUTES", "15"))
 REVERSE_ENABLED = os.getenv("REVERSE_ENABLED", "false").lower() == "true"
 
 REVERSE_COOLDOWN_MINUTES = int(os.getenv("REVERSE_COOLDOWN_MINUTES", "30"))
@@ -1519,8 +1522,37 @@ def open_position(order: OrderRequest):
         risk_data = get_market_risk_data(sym_id)
         atr_value = risk_data.get("atr")
         spread_pct = risk_data.get("spread_pct")
+        volume_ratio = risk_data.get("volume_ratio")
         last_high_1m = risk_data.get("last_high_1m")
         last_low_1m = risk_data.get("last_low_1m")
+
+        if spread_pct is not None and spread_pct > MAX_ENTRY_SPREAD_PCT:
+            record_order_intent({
+                "event": "entry_blocked",
+                "symbol": sym_ccxt,
+                "side": requested_side,
+                "reason": "spread_too_wide",
+                "spread_pct": spread_pct,
+            })
+            return {
+                "status": "blocked",
+                "msg": f"Spread troppo alto ({spread_pct:.4f})",
+                "spread_pct": spread_pct,
+            }
+
+        if volume_ratio is not None and volume_ratio < MIN_ENTRY_VOLUME_RATIO:
+            record_order_intent({
+                "event": "entry_blocked",
+                "symbol": sym_ccxt,
+                "side": requested_side,
+                "reason": "low_volume_ratio",
+                "volume_ratio": volume_ratio,
+            })
+            return {
+                "status": "blocked",
+                "msg": f"Volume ratio troppo basso ({volume_ratio:.2f})",
+                "volume_ratio": volume_ratio,
+            }
 
         target_market = exchange.market(sym_ccxt)
         info = target_market.get("info", {}) or {}
