@@ -50,16 +50,19 @@ ATR_MULTIPLIERS = {
 }
 TECHNICAL_ANALYZER_URL = os.getenv("TECHNICAL_ANALYZER_URL", "http://01_technical_analyzer:8000").strip()
 FALLBACK_TRAILING_PCT = float(os.getenv("FALLBACK_TRAILING_PCT", "0.012"))  # 1.2%
-DEFAULT_INITIAL_SL_PCT = float(os.getenv("DEFAULT_INITIAL_SL_PCT", "0.009"))  # 0.9%
+DEFAULT_INITIAL_SL_PCT = float(os.getenv("DEFAULT_INITIAL_SL_PCT", "0.008"))  # 0.8%
 # --- TAKE PROFIT (fee-aware) ---
-TP_ATR_MULTIPLIER = float(os.getenv("TP_ATR_MULTIPLIER", "1.8"))
-TP_FALLBACK_PCT = float(os.getenv("TP_FALLBACK_PCT", "0.008"))  # 0.8%
+TP_ATR_MULTIPLIER = float(os.getenv("TP_ATR_MULTIPLIER", "2.0"))
+TP_FALLBACK_PCT = float(os.getenv("TP_FALLBACK_PCT", "0.010"))  # 1.0%
 TP_FEE_BUFFER_PCT = float(os.getenv("TP_FEE_BUFFER_PCT", "0.0012"))  # 0.12%
 TOTAL_FEE_PCT = float(os.getenv("TOTAL_FEE_PCT", "0.0025"))  # optional override: taker+maker+slippage
 TP_PARTIAL_ENABLED = os.getenv("TP_PARTIAL_ENABLED", "false").lower() == "true"
 TP_PARTIAL_PCT = float(os.getenv("TP_PARTIAL_PCT", "0.5"))
 TP_PARTIAL_ATR_MULTIPLIER = float(os.getenv("TP_PARTIAL_ATR_MULTIPLIER", "1.0"))
 MICRO_SL_BUFFER_ATR = float(os.getenv("MICRO_SL_BUFFER_ATR", "0.1"))
+SL_ATR_MULTIPLIER = float(os.getenv("SL_ATR_MULTIPLIER", "1.0"))
+MIN_TP_RISK_MULT = float(os.getenv("MIN_TP_RISK_MULT", "1.3"))
+MIN_PARTIAL_TP_RISK_MULT = float(os.getenv("MIN_PARTIAL_TP_RISK_MULT", "0.7"))
 # --- BREAK-EVEN BUFFER ---
 BE_MIN_R = float(os.getenv("BE_MIN_R", "0.03"))  # require at least 0.03R before BE triggers
 BE_FEE_BUFFER_PCT = float(os.getenv("BE_FEE_BUFFER_PCT", "0.0008"))  # offset BE to cover taker+slippage
@@ -190,16 +193,21 @@ def compute_take_profit_price(
     direction: str,
     spread_pct: Optional[float] = None,
     atr_multiplier: Optional[float] = None,
+    risk_distance: Optional[float] = None,
+    min_risk_mult: Optional[float] = None,
 ) -> Optional[float]:
     if price <= 0:
         return None
     fee_buffer_pct = max(TP_FEE_BUFFER_PCT, TOTAL_FEE_PCT) + (spread_pct or 0.0)
     fee_buffer = price * fee_buffer_pct
     atr_mult = atr_multiplier if atr_multiplier is not None else TP_ATR_MULTIPLIER
+    min_rr_mult = min_risk_mult if min_risk_mult is not None else MIN_TP_RISK_MULT
     if atr:
         distance = max(atr * atr_mult, fee_buffer)
     else:
         distance = price * max(TP_FALLBACK_PCT, fee_buffer_pct)
+    if risk_distance and risk_distance > 0:
+        distance = max(distance, risk_distance * min_rr_mult)
     if direction == "long":
         return price + distance
     if direction == "short":
@@ -605,7 +613,7 @@ def check_and_update_trailing_stops():
                 base_sl = sl_current
                 if base_sl == 0.0:
                     if atr:
-                        base_sl = entry_price - (atr * 1.2) if side_dir == "long" else entry_price + (atr * 1.2)
+                        base_sl = entry_price - (atr * SL_ATR_MULTIPLIER) if side_dir == "long" else entry_price + (atr * SL_ATR_MULTIPLIER)
                     else:
                         base_sl = entry_price * (1 - DEFAULT_INITIAL_SL_PCT) if side_dir == "long" else entry_price * (1 + DEFAULT_INITIAL_SL_PCT)
                 position_risk_meta[sym_id] = {
@@ -1002,14 +1010,21 @@ def execute_reverse(symbol: str, current_side_raw: str, recovery_size_pct: float
         # SL iniziale
         sl_pct = DEFAULT_INITIAL_SL_PCT
         if atr_value:
-            sl_price = price - (atr_value * 1.2) if new_dir == "long" else price + (atr_value * 1.2)
+            sl_price = price - (atr_value * SL_ATR_MULTIPLIER) if new_dir == "long" else price + (atr_value * SL_ATR_MULTIPLIER)
             micro_sl = compute_micro_sl_price(new_dir, last_high_1m, last_low_1m, atr_value)
             if micro_sl:
                 sl_price = max(sl_price, micro_sl) if new_dir == "long" else min(sl_price, micro_sl)
         else:
             sl_price = price * (1 - sl_pct) if new_dir == "long" else price * (1 + sl_pct)
         sl_str = exchange.price_to_precision(sym_ccxt, sl_price)
-        tp_price = compute_take_profit_price(price, atr_value, new_dir, spread_pct=spread_pct)
+        risk_distance = abs(price - sl_price)
+        tp_price = compute_take_profit_price(
+            price,
+            atr_value,
+            new_dir,
+            spread_pct=spread_pct,
+            risk_distance=risk_distance,
+        )
         tp_str = exchange.price_to_precision(sym_ccxt, tp_price) if tp_price else None
 
         pos_idx = direction_to_position_idx(new_dir)
@@ -1047,6 +1062,8 @@ def execute_reverse(symbol: str, current_side_raw: str, recovery_size_pct: float
                 new_dir,
                 spread_pct=spread_pct,
                 atr_multiplier=TP_PARTIAL_ATR_MULTIPLIER,
+                risk_distance=risk_distance,
+                min_risk_mult=MIN_PARTIAL_TP_RISK_MULT,
             )
             if partial_price:
                 partial_qty = final_qty * TP_PARTIAL_PCT
@@ -1570,7 +1587,7 @@ def open_position(order: OrderRequest):
         final_qty = float("{:f}".format(final_qty_d.normalize()))
 
         if atr_value:
-            sl_price = price - (atr_value * 1.2) if requested_dir == "long" else price + (atr_value * 1.2)
+            sl_price = price - (atr_value * SL_ATR_MULTIPLIER) if requested_dir == "long" else price + (atr_value * SL_ATR_MULTIPLIER)
             micro_sl = compute_micro_sl_price(requested_dir, last_high_1m, last_low_1m, atr_value)
             if micro_sl:
                 sl_price = max(sl_price, micro_sl) if requested_dir == "long" else min(sl_price, micro_sl)
@@ -1578,7 +1595,14 @@ def open_position(order: OrderRequest):
             sl_pct = float(order.sl_pct) if float(order.sl_pct) > 0 else DEFAULT_INITIAL_SL_PCT
             sl_price = price * (1 - sl_pct) if requested_dir == "long" else price * (1 + sl_pct)
         sl_str = exchange.price_to_precision(sym_ccxt, sl_price)
-        tp_price = compute_take_profit_price(price, atr_value, requested_dir, spread_pct=spread_pct)
+        risk_distance = abs(price - sl_price)
+        tp_price = compute_take_profit_price(
+            price,
+            atr_value,
+            requested_dir,
+            spread_pct=spread_pct,
+            risk_distance=risk_distance,
+        )
         tp_str = exchange.price_to_precision(sym_ccxt, tp_price) if tp_price else None
 
         pos_idx = direction_to_position_idx(requested_dir)
@@ -1614,6 +1638,8 @@ def open_position(order: OrderRequest):
                 requested_dir,
                 spread_pct=spread_pct,
                 atr_multiplier=TP_PARTIAL_ATR_MULTIPLIER,
+                risk_distance=risk_distance,
+                min_risk_mult=MIN_PARTIAL_TP_RISK_MULT,
             )
             if partial_price:
                 partial_qty = final_qty * TP_PARTIAL_PCT

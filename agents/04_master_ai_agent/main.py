@@ -16,6 +16,7 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
+STRATEGY_MODE = os.getenv("STRATEGY_MODE", "trend_breakout").lower()
 
 # Agent URLs for reverse analysis
 AGENT_URLS = {
@@ -591,8 +592,66 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             rsi_val = tech.get("rsi") or tech.get("rsi_7") or 0
             rsi_extreme_long = rsi_val < 35
             rsi_extreme_short = rsi_val > 65
+            volume_ratio = tech.get("volume_ratio")
+            trend_1m = (tech.get("trend_1m") or "").upper()
+            regime_val = (tech.get("regime") or "").lower()
+            breakout = tech.get("breakout") or {}
+            breakout_long = breakout.get("long")
+            breakout_short = breakout.get("short")
+            high_20 = tech.get("high_20")
+            low_20 = tech.get("low_20")
+            macd_hist = tech.get("macd_hist")
+            macd_prev = tech.get("macd_hist_prev")
+            macd_prev2 = tech.get("macd_hist_prev2")
+            macd_improving = macd_prev is not None and macd_hist is not None and macd_prev2 is not None and (
+                (d.get('action') == "OPEN_LONG" and macd_hist > macd_prev > macd_prev2)
+                or (d.get('action') == "OPEN_SHORT" and macd_hist < macd_prev < macd_prev2)
+            )
 
             # Dynamic sizing attiva: usa size in base alla qualità dello score
+
+            # Strategy mode: trend breakout/continuation only
+            if is_open_action(d.get('action', '')) and STRATEGY_MODE == "trend_breakout":
+                strong_momentum = macd_improving or (macd_hist is not None and abs(macd_hist) > 0)
+                mtf_aligned = trend_5m and trend_15m and trend_5m == trend_15m
+                if not (mtf_aligned or (trend_5m and strong_momentum)):
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('strategy_mtf_align')
+                elif d.get('action') == "OPEN_LONG" and trend_5m != "BULLISH":
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('strategy_trend_bias')
+                elif d.get('action') == "OPEN_SHORT" and trend_5m != "BEARISH":
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('strategy_trend_bias')
+                elif ema20 and price:
+                    ema_buffer = 0.3 * (atr_val or 0)
+                    if d.get('action') == "OPEN_LONG" and price < (ema20 - ema_buffer):
+                        d['action'] = 'HOLD'
+                        rationale_suffix.append('strategy_ema_guard')
+                    elif d.get('action') == "OPEN_SHORT" and price > (ema20 + ema_buffer):
+                        d['action'] = 'HOLD'
+                        rationale_suffix.append('strategy_ema_guard')
+                if is_open_action(d.get('action', '')):
+                    breakout_ok = False
+                    if d.get('action') == "OPEN_LONG":
+                        breakout_ok = bool(breakout_long or structure_break.get("long") or (high_20 and price and price > high_20))
+                    elif d.get('action') == "OPEN_SHORT":
+                        breakout_ok = bool(breakout_short or structure_break.get("short") or (low_20 and price and price < low_20))
+                    macd_ok = macd_improving or (macd_hist is not None and ((d.get('action') == "OPEN_LONG" and macd_hist > 0) or (d.get('action') == "OPEN_SHORT" and macd_hist < 0)))
+                    if not (breakout_ok or macd_ok):
+                        d['action'] = 'HOLD'
+                        rationale_suffix.append('strategy_breakout_momentum')
+
+                if is_open_action(d.get('action', '')) and volume_ratio is not None and volume_ratio < max(0.9, params.get("min_volume_ratio", 1.2)):
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('strategy_volume_gate')
+
+                if is_open_action(d.get('action', '')) and regime_val in ("range", "transition"):
+                    strict_volume = volume_ratio is not None and volume_ratio >= 1.15
+                    strict_score = (score_val or 0) >= max(params.get("trend_score_threshold", 0.25) + 0.05, 0.45)
+                    if not ((breakout_long or breakout_short) and (strict_volume or macd_improving) and strict_score):
+                        d['action'] = 'HOLD'
+                        rationale_suffix.append('strategy_range_block')
 
             # Multi-timeframe confirmation (5m vs 15m)
             if (
@@ -978,7 +1037,12 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             if open_intents:
                 intended = open_intents[-1].get('text_intent') or initial_action
                 open_intents[-1]['hard_block'] = hard_block or not is_open_action(intended)
-                if initial_action in ("OPEN_LONG", "OPEN_SHORT") and d.get('action') == 'HOLD' and not hard_block:
+                if (
+                    initial_action in ("OPEN_LONG", "OPEN_SHORT")
+                    and d.get('action') == 'HOLD'
+                    and not hard_block
+                    and STRATEGY_MODE != "trend_breakout"
+                ):
                     d['action'] = initial_action
                     d['size_pct'] = dynamic_size_pct(score_val, params, atr_pct)
                     d['hold_quality'] = None
