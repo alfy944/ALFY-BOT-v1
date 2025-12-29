@@ -228,6 +228,7 @@ class CryptoTechnicalAnalysisBybit:
             "ema_dist_ok": ema50_1h_dist is not None and ema50_1h_dist < DEFAULT_RANGE_CONFIG["ema_dist_threshold"],
             "atr_pct_ok": atr_pct is not None and atr_pct < DEFAULT_RANGE_CONFIG["atr_pct_threshold"],
         }
+        range_checks = {k: bool(v) for k, v in range_checks.items()}
         range_score = sum(1 for v in range_checks.values() if v)
         range_active = bool(range_checks["adx_ok"]) and range_score >= DEFAULT_RANGE_CONFIG["min_checks"]
         range_block_reason = [k for k, v in range_checks.items() if not v]
@@ -373,13 +374,15 @@ class CryptoTechnicalAnalysisBybit:
             "short_rejection": bool(short_rejection),
             "long_reentry": bool(long_reentry),
             "short_reentry": bool(short_reentry),
-            "breakout_guard": breakout_guard_recent,
+            "breakout_guard": bool(breakout_guard_recent),
             "breakout_guard_lookback": guard_lookback,
             "setup_pending": setup_side is not None,
             "setup_side": setup_side,
             "setup_ttl_bars": setup_ttl,
             "setup_age_bars": setup_age_bars,
             "candle_close_ts": int(last["timestamp"].timestamp() * 1000),
+            "range_checks": range_checks,
+            "range_block_reason": range_block_reason,
         }
 
         return {
