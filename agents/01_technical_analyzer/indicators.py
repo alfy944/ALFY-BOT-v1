@@ -54,6 +54,19 @@ class CryptoTechnicalAnalysisBybit:
             return df.iloc[:-1].reset_index(drop=True)
         return df
 
+    def _sanitize_for_json(self, obj: Any) -> Any:
+        if isinstance(obj, dict):
+            return {k: self._sanitize_for_json(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [self._sanitize_for_json(v) for v in obj]
+        if isinstance(obj, tuple):
+            return [self._sanitize_for_json(v) for v in obj]
+        if isinstance(obj, float):
+            if pd.isna(obj) or obj == float("inf") or obj == float("-inf"):
+                return None
+            return obj
+        return obj
+
     def fetch_ohlcv(self, coin: str, interval: str, limit: int = 200) -> pd.DataFrame:
         if interval not in INTERVAL_TO_BYBIT: interval = "15m"
         bybit_interval = INTERVAL_TO_BYBIT[interval]
@@ -385,7 +398,7 @@ class CryptoTechnicalAnalysisBybit:
             "range_block_reason": range_block_reason,
         }
 
-        return {
+        payload = {
             "symbol": ticker,
             "price": last["close"],
             "trend": trend_5m,
@@ -473,6 +486,7 @@ class CryptoTechnicalAnalysisBybit:
                 "atr_pct": round(atr_pct, 6) if atr_pct is not None else None,
             }
         }
+        return self._sanitize_for_json(payload)
 
     def backtest_mean_reversion(
         self,
@@ -711,7 +725,7 @@ class CryptoTechnicalAnalysisBybit:
         rolling_max = equity_series.cummax()
         drawdown = ((equity_series - rolling_max) / rolling_max).min() if not equity_series.empty else 0.0
 
-        return {
+        payload = {
             "symbol": symbol,
             "params": {
                 "entry_interval": entry_interval,
@@ -731,3 +745,4 @@ class CryptoTechnicalAnalysisBybit:
             },
             "trades_sample": trades[-10:],
         }
+        return self._sanitize_for_json(payload)
