@@ -7,11 +7,23 @@ import httpx
 from decimal import Decimal, ROUND_DOWN
 from datetime import datetime
 from typing import Optional, Any, Dict, Tuple
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from pydantic import BaseModel
 from threading import Thread, Lock
 
 app = FastAPI()
+API_AUTH_TOKEN = os.getenv("POSITION_MANAGER_TOKEN", "").strip()
+
+@app.middleware("http")
+async def auth_guard(request: Request, call_next):
+    if not API_AUTH_TOKEN:
+        return await call_next(request)
+    if request.url.path in ("/docs", "/openapi.json"):
+        return await call_next(request)
+    token = request.headers.get("X-API-KEY", "")
+    if token != API_AUTH_TOKEN:
+        return Response(status_code=401, content="Unauthorized")
+    return await call_next(request)
 
 # =========================================================
 # CONFIG
@@ -27,25 +39,50 @@ IS_TESTNET = os.getenv("BYBIT_TESTNET", "false").lower() == "true"
 HEDGE_MODE = os.getenv("BYBIT_HEDGE_MODE", "false").lower() == "true"
 
 # --- PARAMETRI TRAILING STOP DINAMICO (ATR-BASED) ---
-TRAILING_ACTIVATION_PCT = float(os.getenv("TRAILING_ACTIVATION_PCT", "0.018"))  # 1.8% (leveraged ROI fraction)
-ATR_MULTIPLIER_DEFAULT = float(os.getenv("ATR_MULTIPLIER_DEFAULT", "2.5"))
+TRAILING_ACTIVATION_PCT = float(os.getenv("TRAILING_ACTIVATION_PCT", "0.007"))  # 0.7% (leveraged ROI fraction)
+ATR_MULTIPLIER_DEFAULT = float(os.getenv("ATR_MULTIPLIER_DEFAULT", "1.5"))
 ATR_MULTIPLIERS = {
-    "BTC": 2.0,
-    "ETH": 2.0,
-    "SOL": 3.0,
-    "DOGE": 3.5,
-    "PEPE": 4.0,
+    "BTC": 1.2,
+    "ETH": 1.3,
+    "SOL": 1.6,
+    "DOGE": 2.0,
+    "PEPE": 2.5,
 }
 TECHNICAL_ANALYZER_URL = os.getenv("TECHNICAL_ANALYZER_URL", "http://01_technical_analyzer:8000").strip()
-FALLBACK_TRAILING_PCT = float(os.getenv("FALLBACK_TRAILING_PCT", "0.025"))  # 2.5%
-DEFAULT_INITIAL_SL_PCT = float(os.getenv("DEFAULT_INITIAL_SL_PCT", "0.04"))  # 4%
+FALLBACK_TRAILING_PCT = float(os.getenv("FALLBACK_TRAILING_PCT", "0.012"))  # 1.2%
+DEFAULT_INITIAL_SL_PCT = float(os.getenv("DEFAULT_INITIAL_SL_PCT", "0.008"))  # 0.8%
+# --- TAKE PROFIT (fee-aware) ---
+TP_ATR_MULTIPLIER = float(os.getenv("TP_ATR_MULTIPLIER", "2.0"))
+TP_FALLBACK_PCT = float(os.getenv("TP_FALLBACK_PCT", "0.010"))  # 1.0%
+TP_FEE_BUFFER_PCT = float(os.getenv("TP_FEE_BUFFER_PCT", "0.0012"))  # 0.12%
+TOTAL_FEE_PCT = float(os.getenv("TOTAL_FEE_PCT", "0.0025"))  # optional override: taker+maker+slippage
+TP_PARTIAL_ENABLED = os.getenv("TP_PARTIAL_ENABLED", "false").lower() == "true"
+TP_PARTIAL_PCT = float(os.getenv("TP_PARTIAL_PCT", "0.5"))
+TP_PARTIAL_ATR_MULTIPLIER = float(os.getenv("TP_PARTIAL_ATR_MULTIPLIER", "1.0"))
+MICRO_SL_BUFFER_ATR = float(os.getenv("MICRO_SL_BUFFER_ATR", "0.1"))
+SL_ATR_MULTIPLIER = float(os.getenv("SL_ATR_MULTIPLIER", "1.0"))
+MIN_TP_RISK_MULT = float(os.getenv("MIN_TP_RISK_MULT", "1.3"))
+MIN_PARTIAL_TP_RISK_MULT = float(os.getenv("MIN_PARTIAL_TP_RISK_MULT", "0.7"))
 # --- BREAK-EVEN BUFFER ---
-BE_MIN_R = float(os.getenv("BE_MIN_R", "0.1"))  # require at least 0.1R before BE triggers
+BE_MIN_R = float(os.getenv("BE_MIN_R", "0.03"))  # require at least 0.03R before BE triggers
 BE_FEE_BUFFER_PCT = float(os.getenv("BE_FEE_BUFFER_PCT", "0.0008"))  # offset BE to cover taker+slippage
+# --- PROFIT LOCK ---
+PROFIT_LOCK_PCT = float(os.getenv("PROFIT_LOCK_PCT", "0.016"))  # lock gains after 1.6% move
+PROFIT_LOCK_KEEP_PCT = float(os.getenv("PROFIT_LOCK_KEEP_PCT", "0.006"))  # keep at least 0.6%
+# --- QUICK PROFIT EXIT ---
+QUICK_TAKE_PCT = float(os.getenv("QUICK_TAKE_PCT", "0.006"))  # take quick profits after 0.6%
+# --- LIMIT ENTRY ---
+LIMIT_ENTRY_ENABLED = os.getenv("LIMIT_ENTRY_ENABLED", "true").lower() == "true"
+LIMIT_ENTRY_OFFSET_PCT = float(os.getenv("LIMIT_ENTRY_OFFSET_PCT", "0.0002"))  # 0.02%
+LIMIT_ENTRY_TIMEOUT_SEC = float(os.getenv("LIMIT_ENTRY_TIMEOUT_SEC", "10"))
+LIMIT_ENTRY_FALLBACK_MARKET = os.getenv("LIMIT_ENTRY_FALLBACK_MARKET", "false").lower() == "true"
+# --- ENTRY QUALITY FILTERS ---
+MAX_ENTRY_SPREAD_PCT = float(os.getenv("MAX_ENTRY_SPREAD_PCT", "0.001"))
+MIN_ENTRY_VOLUME_RATIO = float(os.getenv("MIN_ENTRY_VOLUME_RATIO", "1.1"))
 # --- TIME-BASED EXIT ---
-TIME_EXIT_BARS = int(os.getenv("TIME_EXIT_BARS", "14"))
-TIME_EXIT_INTERVAL_MIN = int(os.getenv("TIME_EXIT_INTERVAL_MIN", "15"))
-TIME_EXIT_MIN_PROFIT_R = float(os.getenv("TIME_EXIT_MIN_PROFIT_R", "0.4"))
+TIME_EXIT_BARS = int(os.getenv("TIME_EXIT_BARS", "8"))
+TIME_EXIT_INTERVAL_MIN = int(os.getenv("TIME_EXIT_INTERVAL_MIN", "5"))
+TIME_EXIT_MIN_PROFIT_R = float(os.getenv("TIME_EXIT_MIN_PROFIT_R", "0.25"))
 TIME_EXIT_ATR_DROP_PCT = float(os.getenv("TIME_EXIT_ATR_DROP_PCT", "0.1"))
 
 # --- PARAMETRI AI REVIEW / REVERSE ---
@@ -56,7 +93,7 @@ WARNING_THRESHOLD = float(os.getenv("WARNING_THRESHOLD", "-0.05"))
 AI_REVIEW_THRESHOLD = float(os.getenv("AI_REVIEW_THRESHOLD", "-0.08"))
 REVERSE_THRESHOLD = float(os.getenv("REVERSE_THRESHOLD", "-0.10"))
 HARD_STOP_THRESHOLD = float(os.getenv("HARD_STOP_THRESHOLD", "-0.03"))
-LOSS_COOLDOWN_MINUTES = int(os.getenv("LOSS_COOLDOWN_MINUTES", "30"))
+LOSS_COOLDOWN_MINUTES = int(os.getenv("LOSS_COOLDOWN_MINUTES", "15"))
 REVERSE_ENABLED = os.getenv("REVERSE_ENABLED", "false").lower() == "true"
 
 REVERSE_COOLDOWN_MINUTES = int(os.getenv("REVERSE_COOLDOWN_MINUTES", "30"))
@@ -64,11 +101,12 @@ REVERSE_LEVERAGE = float(os.getenv("REVERSE_LEVERAGE", "5.0"))
 reverse_cooldown_tracker: Dict[str, float] = {}
 
 # --- COOLDOWN CONFIGURATION ---
-COOLDOWN_MINUTES = int(os.getenv("COOLDOWN_MINUTES", "5"))
+COOLDOWN_MINUTES = int(os.getenv("COOLDOWN_MINUTES", "0"))
 COOLDOWN_FILE = os.getenv("COOLDOWN_FILE", "/data/closed_cooldown.json")
 
 # --- AI DECISIONS FILE ---
 AI_DECISIONS_FILE = os.getenv("AI_DECISIONS_FILE", "/data/ai_decisions.json")
+ORDER_INTENTS_FILE = os.getenv("ORDER_INTENTS_FILE", "/data/order_intents.json")
 
 # --- LEARNING AGENT ---
 LEARNING_AGENT_URL = os.getenv("LEARNING_AGENT_URL", "http://10_learning_agent:8000").strip()
@@ -149,6 +187,90 @@ def normalize_position_side(side_raw: str) -> Optional[str]:
         return "short"
     return None
 
+def compute_take_profit_price(
+    price: float,
+    atr: Optional[float],
+    direction: str,
+    spread_pct: Optional[float] = None,
+    atr_multiplier: Optional[float] = None,
+    risk_distance: Optional[float] = None,
+    min_risk_mult: Optional[float] = None,
+) -> Optional[float]:
+    if price <= 0:
+        return None
+    fee_buffer_pct = max(TP_FEE_BUFFER_PCT, TOTAL_FEE_PCT) + (spread_pct or 0.0)
+    fee_buffer = price * fee_buffer_pct
+    atr_mult = atr_multiplier if atr_multiplier is not None else TP_ATR_MULTIPLIER
+    min_rr_mult = min_risk_mult if min_risk_mult is not None else MIN_TP_RISK_MULT
+    if atr:
+        distance = max(atr * atr_mult, fee_buffer)
+    else:
+        distance = price * max(TP_FALLBACK_PCT, fee_buffer_pct)
+    if risk_distance and risk_distance > 0:
+        distance = max(distance, risk_distance * min_rr_mult)
+    if direction == "long":
+        return price + distance
+    if direction == "short":
+        candidate = price - distance
+        return candidate if candidate > 0 else None
+    return None
+
+def compute_micro_sl_price(
+    direction: str,
+    last_high_1m: Optional[float],
+    last_low_1m: Optional[float],
+    atr: Optional[float],
+) -> Optional[float]:
+    if atr is None:
+        return None
+    buffer_val = atr * MICRO_SL_BUFFER_ATR
+    if direction == "long" and last_low_1m:
+        return max(last_low_1m - buffer_val, 0)
+    if direction == "short" and last_high_1m:
+        return max(last_high_1m + buffer_val, 0)
+    return None
+
+def compute_limit_entry_price(side: str, bid: float, ask: float) -> Optional[float]:
+    if bid <= 0 or ask <= 0:
+        return None
+    if side == "buy":
+        return bid * (1 - LIMIT_ENTRY_OFFSET_PCT)
+    if side == "sell":
+        return ask * (1 + LIMIT_ENTRY_OFFSET_PCT)
+    return None
+
+def place_entry_order(
+    sym_ccxt: str,
+    side: str,
+    qty: float,
+    limit_price: Optional[float],
+    params: Dict[str, Any],
+) -> Dict[str, Any]:
+    if LIMIT_ENTRY_ENABLED and limit_price:
+        limit_str = exchange.price_to_precision(sym_ccxt, limit_price)
+        limit_params = params.copy()
+        limit_params["timeInForce"] = "PostOnly"
+        order = exchange.create_order(sym_ccxt, "limit", side, qty, price=limit_str, params=limit_params)
+        if LIMIT_ENTRY_TIMEOUT_SEC <= 0:
+            return order
+        deadline = time.time() + LIMIT_ENTRY_TIMEOUT_SEC
+        while time.time() < deadline:
+            time.sleep(0.2)
+            try:
+                status = exchange.fetch_order(order.get("id"), sym_ccxt)
+                if status and status.get("status") in ("closed", "filled"):
+                    return status
+            except Exception:
+                continue
+        try:
+            exchange.cancel_order(order.get("id"), sym_ccxt)
+        except Exception:
+            pass
+        if LIMIT_ENTRY_FALLBACK_MARKET:
+            return exchange.create_order(sym_ccxt, "market", side, qty, params=params)
+        return order
+    return exchange.create_order(sym_ccxt, "market", side, qty, params=params)
+
 def side_to_order_side(direction: str) -> str:
     """
     'long' -> 'buy'
@@ -206,6 +328,15 @@ def save_json(path: str, data):
                 json.dump(data, f, indent=2)
         except Exception:
             pass
+
+def record_order_intent(data: Dict[str, Any]) -> None:
+    intents = load_json(ORDER_INTENTS_FILE, default=[])
+    intents.append({
+        "timestamp": datetime.now().isoformat(),
+        **data,
+    })
+    intents = intents[-200:]
+    save_json(ORDER_INTENTS_FILE, intents)
 
 # =========================================================
 # EXCHANGE SETUP
@@ -311,6 +442,12 @@ def record_closed_trade(
             )
             if r.status_code == 200:
                 print(f"📚 Trade recorded for learning: {symbol} {side} PnL={pnl_pct:.2f}%")
+                record_order_intent({
+                    "event": "trade_recorded",
+                    "symbol": symbol,
+                    "side": side,
+                    "pnl_pct": round(pnl_pct, 2),
+                })
     except Exception as e:
         print(f"⚠️ Failed to record trade for learning: {e}")
 
@@ -378,6 +515,10 @@ def get_market_risk_data(symbol: str) -> Dict[str, Any]:
                     "ema_50": to_float((d.get("details", {}) or {}).get("ema_50"), None),
                     "structure_break": d.get("structure_break") or {},
                     "volume_spike": bool(d.get("volume_spike")),
+                    "volume_ratio": to_float((d.get("details", {}) or {}).get("volume_ratio"), None),
+                    "last_high_1m": to_float(d.get("last_high_1m"), None),
+                    "last_low_1m": to_float(d.get("last_low_1m"), None),
+                    "spread_pct": to_float(d.get("spread_pct"), None),
                     "swing_high": to_float((d.get("structure_break") or {}).get("swing_high"), None),
                     "swing_low": to_float((d.get("structure_break") or {}).get("swing_low"), None),
                     "support": to_float(d.get("support"), None),
@@ -472,7 +613,7 @@ def check_and_update_trailing_stops():
                 base_sl = sl_current
                 if base_sl == 0.0:
                     if atr:
-                        base_sl = entry_price - (atr * 1.2) if side_dir == "long" else entry_price + (atr * 1.2)
+                        base_sl = entry_price - (atr * SL_ATR_MULTIPLIER) if side_dir == "long" else entry_price + (atr * SL_ATR_MULTIPLIER)
                     else:
                         base_sl = entry_price * (1 - DEFAULT_INITIAL_SL_PCT) if side_dir == "long" else entry_price * (1 + DEFAULT_INITIAL_SL_PCT)
                 position_risk_meta[sym_id] = {
@@ -491,12 +632,34 @@ def check_and_update_trailing_stops():
 
             new_sl_price = None
             profit_distance = (mark_price - entry_price) if side_dir == "long" else (entry_price - mark_price)
-            effective_fee_buffer_pct = BE_FEE_BUFFER_PCT / max(1.0, leverage)
+            spread_pct = risk_data.get("spread_pct") or 0.0
+            effective_fee_buffer_pct = max(BE_FEE_BUFFER_PCT, max(TP_FEE_BUFFER_PCT, TOTAL_FEE_PCT) + spread_pct) / max(1.0, leverage)
             fee_buffer_abs = entry_price * effective_fee_buffer_pct
             r_multiple = profit_distance / risk_distance if risk_distance > 0 else 0.0
             sl_at_be = (side_dir == "long" and sl_current >= entry_price) or (side_dir == "short" and sl_current <= entry_price)
             quality_score = position_risk_meta.get(sym_id, {}).get("score")
             trailing_atr_mult = 1.5 if (quality_score is not None and quality_score > 0.75) else 1.0
+
+            # Quick profit exit for aggressive scalping (fee-aware)
+            if QUICK_TAKE_PCT > 0 and entry_price:
+                quick_target = entry_price * QUICK_TAKE_PCT
+                if profit_distance >= max(quick_target, fee_buffer_abs):
+                    print(f"✅ Quick scalp exit for {symbol}: +{profit_distance:.6f} (fee buffer {fee_buffer_abs:.6f})")
+                    execute_close_position(symbol)
+                    continue
+
+            # Profit lock: preserve gains once price moves enough
+            if entry_price and mark_price and PROFIT_LOCK_PCT > 0:
+                target_lock = entry_price * (1 + PROFIT_LOCK_PCT) if side_dir == "long" else entry_price * (1 - PROFIT_LOCK_PCT)
+                if (side_dir == "long" and mark_price >= target_lock) or (side_dir == "short" and mark_price <= target_lock):
+                    lock_price = entry_price * (1 + PROFIT_LOCK_KEEP_PCT) if side_dir == "long" else entry_price * (1 - PROFIT_LOCK_KEEP_PCT)
+                    lock_price = lock_price + fee_buffer_abs if side_dir == "long" else max(0.0, lock_price - fee_buffer_abs)
+                    if side_dir == "long":
+                        if sl_current == 0.0 or lock_price > sl_current:
+                            new_sl_price = max(new_sl_price or 0, lock_price)
+                    else:
+                        if sl_current == 0.0 or lock_price < sl_current:
+                            new_sl_price = lock_price if new_sl_price is None else min(new_sl_price, lock_price)
 
             momentum_allowed = False
             if risk_distance > 0:
@@ -505,6 +668,12 @@ def check_and_update_trailing_stops():
             # Momentum-based soft exit (2/3 conditions) only if protected/at TP0
             if momentum_exit.get(side_dir) and momentum_allowed:
                 print(f"⏱️ Momentum exit triggered for {symbol} ({side_dir}) - closing position")
+                record_order_intent({
+                    "event": "momentum_exit",
+                    "symbol": symbol,
+                    "side": side_dir,
+                    "reason": "momentum_exit",
+                })
                 execute_close_position(symbol)
                 continue
 
@@ -527,6 +696,12 @@ def check_and_update_trailing_stops():
                         f"⏱️ Time-based exit {symbol}: bars={elapsed_bars:.1f}, r={r_multiple:.2f}, "
                         f"ATR% {current_atr_pct:.4f} (< {initial_atr_pct:.4f})"
                     )
+                    record_order_intent({
+                        "event": "time_exit",
+                        "symbol": symbol,
+                        "side": side_dir,
+                        "reason": "time_exit",
+                    })
                     execute_close_position(symbol)
                     continue
 
@@ -714,6 +889,13 @@ def execute_close_position(symbol: str) -> bool:
         close_side = "sell" if side_dir == "long" else "buy"
 
         print(f"🔒 Chiudo posizione {sym_ccxt}: {side_dir} size={size} idx={position_idx}")
+        record_order_intent({
+            "event": "close_initiated",
+            "symbol": sym_ccxt,
+            "side": side_dir,
+            "size": size,
+            "order_id": None,
+        })
 
         params = {"category": "linear", "reduceOnly": True}
         if HEDGE_MODE:
@@ -745,10 +927,22 @@ def execute_close_position(symbol: str) -> bool:
 
             save_json(COOLDOWN_FILE, cooldowns)
             print(f"💾 Cooldown salvato per {direction_key}")
+            record_order_intent({
+                "event": "cooldown_saved",
+                "symbol": sym_ccxt,
+                "side": side_dir,
+                "reason": direction_key,
+            })
         except Exception as e:
             print(f"⚠️ Errore salvataggio cooldown: {e}")
 
         print(f"✅ Posizione {sym_ccxt} chiusa con successo | PnL={pnl_pct:.2f}%")
+        record_order_intent({
+            "event": "close_success",
+            "symbol": sym_ccxt,
+            "side": side_dir,
+            "pnl_pct": round(pnl_pct, 2),
+        })
         return True
 
     except Exception as e:
@@ -775,7 +969,10 @@ def execute_reverse(symbol: str, current_side_raw: str, recovery_size_pct: float
 
         bal = exchange.fetch_balance(params={"type": "swap"})
         free_balance = to_float((bal.get("USDT", {}) or {}).get("free", 0.0), 0.0)
-        price = to_float(exchange.fetch_ticker(sym_ccxt).get("last"), 0.0)
+        ticker = exchange.fetch_ticker(sym_ccxt) or {}
+        price = to_float(ticker.get("last"), 0.0)
+        bid = to_float(ticker.get("bid"), 0.0)
+        ask = to_float(ticker.get("ask"), 0.0)
         if price <= 0:
             print("❌ Prezzo non valido per reverse")
             return False
@@ -804,23 +1001,86 @@ def execute_reverse(symbol: str, current_side_raw: str, recovery_size_pct: float
         except Exception as e:
             print(f"⚠️ Impossibile impostare leva (ccxt): {e}")
 
+        risk_data = get_market_risk_data(sym_ccxt)
+        atr_value = risk_data.get("atr")
+        spread_pct = risk_data.get("spread_pct")
+        last_high_1m = risk_data.get("last_high_1m")
+        last_low_1m = risk_data.get("last_low_1m")
+
         # SL iniziale
         sl_pct = DEFAULT_INITIAL_SL_PCT
-        sl_price = price * (1 - sl_pct) if new_dir == "long" else price * (1 + sl_pct)
+        if atr_value:
+            sl_price = price - (atr_value * SL_ATR_MULTIPLIER) if new_dir == "long" else price + (atr_value * SL_ATR_MULTIPLIER)
+            micro_sl = compute_micro_sl_price(new_dir, last_high_1m, last_low_1m, atr_value)
+            if micro_sl:
+                sl_price = max(sl_price, micro_sl) if new_dir == "long" else min(sl_price, micro_sl)
+        else:
+            sl_price = price * (1 - sl_pct) if new_dir == "long" else price * (1 + sl_pct)
         sl_str = exchange.price_to_precision(sym_ccxt, sl_price)
+        risk_distance = abs(price - sl_price)
+        tp_price = compute_take_profit_price(
+            price,
+            atr_value,
+            new_dir,
+            spread_pct=spread_pct,
+            risk_distance=risk_distance,
+        )
+        tp_str = exchange.price_to_precision(sym_ccxt, tp_price) if tp_price else None
 
         pos_idx = direction_to_position_idx(new_dir)
 
+        limit_price = compute_limit_entry_price(new_side, bid, ask)
+        limit_log = f"{limit_price:.6f}" if limit_price else "n/a"
         print(
             f"🔄 REVERSE {sym_ccxt}: {current_dir} -> {new_dir}, "
-            f"size={recovery_size_pct*100:.1f}%, qty={final_qty}, idx={pos_idx}"
+            f"size={recovery_size_pct*100:.1f}%, qty={final_qty}, idx={pos_idx}, limit={limit_log}"
         )
 
         params = {"category": "linear", "stopLoss": sl_str}
+        if tp_str:
+            params["takeProfit"] = tp_str
         if HEDGE_MODE:
             params["positionIdx"] = pos_idx
 
-        res = exchange.create_order(sym_ccxt, "market", new_side, final_qty, params=params)
+        res = place_entry_order(sym_ccxt, new_side, final_qty, limit_price, params)
+        record_order_intent({
+            "event": "order_placed",
+            "symbol": sym_ccxt,
+            "side": new_side,
+            "qty": final_qty,
+            "limit_price": limit_price,
+            "sl": sl_str,
+            "tp": tp_str,
+            "order_type": res.get("type"),
+            "status": res.get("status"),
+            "order_id": res.get("id"),
+        })
+        if TP_PARTIAL_ENABLED and tp_price:
+            partial_price = compute_take_profit_price(
+                price,
+                atr_value,
+                new_dir,
+                spread_pct=spread_pct,
+                atr_multiplier=TP_PARTIAL_ATR_MULTIPLIER,
+                risk_distance=risk_distance,
+                min_risk_mult=MIN_PARTIAL_TP_RISK_MULT,
+            )
+            if partial_price:
+                partial_qty = final_qty * TP_PARTIAL_PCT
+                if partial_qty >= min_qty and partial_qty < final_qty:
+                    partial_qty = float("{:f}".format(Decimal(str(partial_qty)).quantize(d_step, rounding=ROUND_DOWN).normalize()))
+                    tp_partial_str = exchange.price_to_precision(sym_ccxt, partial_price)
+                    partial_params = {"category": "linear", "reduceOnly": True}
+                    if HEDGE_MODE:
+                        partial_params["positionIdx"] = pos_idx
+                    exchange.create_order(
+                        sym_ccxt,
+                        "limit",
+                        side_to_order_side("short" if new_dir == "long" else "long"),
+                        partial_qty,
+                        price=tp_partial_str,
+                        params=partial_params,
+                    )
         print(f"✅ Reverse eseguito con successo: {res.get('id')}")
         return True
 
@@ -1269,12 +1529,47 @@ def open_position(order: OrderRequest):
         bal = exchange.fetch_balance(params={"type": "swap"})
         free_usdt = to_float((bal.get("USDT", {}) or {}).get("free", 0.0), 0.0)
         cost = max(free_usdt * float(order.size_pct), 10.0)
-        price = to_float(exchange.fetch_ticker(sym_ccxt).get("last"), 0.0)
+        ticker = exchange.fetch_ticker(sym_ccxt) or {}
+        price = to_float(ticker.get("last"), 0.0)
+        bid = to_float(ticker.get("bid"), 0.0)
+        ask = to_float(ticker.get("ask"), 0.0)
         if price <= 0:
             return {"status": "error", "msg": "Invalid price"}
 
         risk_data = get_market_risk_data(sym_id)
         atr_value = risk_data.get("atr")
+        spread_pct = risk_data.get("spread_pct")
+        volume_ratio = risk_data.get("volume_ratio")
+        last_high_1m = risk_data.get("last_high_1m")
+        last_low_1m = risk_data.get("last_low_1m")
+
+        if spread_pct is not None and spread_pct > MAX_ENTRY_SPREAD_PCT:
+            record_order_intent({
+                "event": "entry_blocked",
+                "symbol": sym_ccxt,
+                "side": requested_side,
+                "reason": "spread_too_wide",
+                "spread_pct": spread_pct,
+            })
+            return {
+                "status": "blocked",
+                "msg": f"Spread troppo alto ({spread_pct:.4f})",
+                "spread_pct": spread_pct,
+            }
+
+        if volume_ratio is not None and volume_ratio < MIN_ENTRY_VOLUME_RATIO:
+            record_order_intent({
+                "event": "entry_blocked",
+                "symbol": sym_ccxt,
+                "side": requested_side,
+                "reason": "low_volume_ratio",
+                "volume_ratio": volume_ratio,
+            })
+            return {
+                "status": "blocked",
+                "msg": f"Volume ratio troppo basso ({volume_ratio:.2f})",
+                "volume_ratio": volume_ratio,
+            }
 
         target_market = exchange.market(sym_ccxt)
         info = target_market.get("info", {}) or {}
@@ -1292,21 +1587,76 @@ def open_position(order: OrderRequest):
         final_qty = float("{:f}".format(final_qty_d.normalize()))
 
         if atr_value:
-            sl_price = price - (atr_value * 1.2) if requested_dir == "long" else price + (atr_value * 1.2)
+            sl_price = price - (atr_value * SL_ATR_MULTIPLIER) if requested_dir == "long" else price + (atr_value * SL_ATR_MULTIPLIER)
+            micro_sl = compute_micro_sl_price(requested_dir, last_high_1m, last_low_1m, atr_value)
+            if micro_sl:
+                sl_price = max(sl_price, micro_sl) if requested_dir == "long" else min(sl_price, micro_sl)
         else:
             sl_pct = float(order.sl_pct) if float(order.sl_pct) > 0 else DEFAULT_INITIAL_SL_PCT
             sl_price = price * (1 - sl_pct) if requested_dir == "long" else price * (1 + sl_pct)
         sl_str = exchange.price_to_precision(sym_ccxt, sl_price)
+        risk_distance = abs(price - sl_price)
+        tp_price = compute_take_profit_price(
+            price,
+            atr_value,
+            requested_dir,
+            spread_pct=spread_pct,
+            risk_distance=risk_distance,
+        )
+        tp_str = exchange.price_to_precision(sym_ccxt, tp_price) if tp_price else None
 
         pos_idx = direction_to_position_idx(requested_dir)
 
-        print(f"🚀 ORDER {sym_ccxt}: side={requested_side} qty={final_qty} SL={sl_str} idx={pos_idx}")
+        tp_log = tp_str if tp_str else "n/a"
+        limit_price = compute_limit_entry_price(requested_side, bid, ask)
+        limit_log = f"{limit_price:.6f}" if limit_price else "n/a"
+        print(f"🚀 ORDER {sym_ccxt}: side={requested_side} qty={final_qty} SL={sl_str} TP={tp_log} idx={pos_idx} limit={limit_log}")
 
         params = {"category": "linear", "stopLoss": sl_str}
+        if tp_str:
+            params["takeProfit"] = tp_str
         if HEDGE_MODE:
             params["positionIdx"] = pos_idx
 
-        res = exchange.create_order(sym_ccxt, "market", requested_side, final_qty, params=params)
+        res = place_entry_order(sym_ccxt, requested_side, final_qty, limit_price, params)
+        record_order_intent({
+            "event": "order_placed",
+            "symbol": sym_ccxt,
+            "side": requested_side,
+            "qty": final_qty,
+            "limit_price": limit_price,
+            "sl": sl_str,
+            "tp": tp_str,
+            "order_type": res.get("type"),
+            "status": res.get("status"),
+            "order_id": res.get("id"),
+        })
+        if TP_PARTIAL_ENABLED and tp_price:
+            partial_price = compute_take_profit_price(
+                price,
+                atr_value,
+                requested_dir,
+                spread_pct=spread_pct,
+                atr_multiplier=TP_PARTIAL_ATR_MULTIPLIER,
+                risk_distance=risk_distance,
+                min_risk_mult=MIN_PARTIAL_TP_RISK_MULT,
+            )
+            if partial_price:
+                partial_qty = final_qty * TP_PARTIAL_PCT
+                if partial_qty >= min_qty and partial_qty < final_qty:
+                    partial_qty = float("{:f}".format(Decimal(str(partial_qty)).quantize(d_step, rounding=ROUND_DOWN).normalize()))
+                    tp_partial_str = exchange.price_to_precision(sym_ccxt, partial_price)
+                    partial_params = {"category": "linear", "reduceOnly": True}
+                    if HEDGE_MODE:
+                        partial_params["positionIdx"] = pos_idx
+                    exchange.create_order(
+                        sym_ccxt,
+                        "limit",
+                        side_to_order_side("short" if requested_dir == "long" else "long"),
+                        partial_qty,
+                        price=tp_partial_str,
+                        params=partial_params,
+                    )
         initial_risk_pct = 0.0
         try:
             initial_risk_pct = abs(price - sl_price) / price * float(order.leverage) * 100

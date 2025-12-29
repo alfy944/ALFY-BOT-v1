@@ -1,7 +1,7 @@
 import json
 import os
 from datetime import datetime
-from config import DATA_DIR, EQUITY_HISTORY_FILE, CLOSED_POSITIONS_FILE, AI_DECISIONS_FILE, STARTING_DATE, STARTING_BALANCE, SHARED_DATA_DIR
+from config import DATA_DIR, EQUITY_HISTORY_FILE, CLOSED_POSITIONS_FILE, AI_DECISIONS_FILE, ORDER_INTENTS_FILE, STARTING_DATE, STARTING_BALANCE, SHARED_DATA_DIR
 
 def ensure_data_dir():
     """Crea la directory data se non esiste"""
@@ -104,6 +104,10 @@ def update_closed_positions(new_positions):
 def get_ai_decisions():
     """Ottiene le decisioni dell'AI"""
     return load_json(AI_DECISIONS_FILE, [])
+
+def get_order_intents():
+    """Ottiene gli ordini piazzati (limit/market)"""
+    return load_json(ORDER_INTENTS_FILE, [])
 
 def add_ai_decision(decision_data):
     """Aggiunge una decisione AI"""
