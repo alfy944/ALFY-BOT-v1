@@ -245,6 +245,18 @@ class CryptoTechnicalAnalysisBybit:
         range_score = sum(1 for v in range_checks.values() if v)
         range_active = bool(range_checks["adx_ok"]) and range_score >= DEFAULT_RANGE_CONFIG["min_checks"]
         range_block_reason = [k for k, v in range_checks.items() if not v]
+        range_block_reason_labels = []
+        for reason in range_block_reason:
+            if reason == "adx_ok":
+                range_block_reason_labels.append("adx_high")
+            elif reason == "ema_slope_ok":
+                range_block_reason_labels.append("ema_slope_high")
+            elif reason == "ema_dist_ok":
+                range_block_reason_labels.append("ema_dist_high")
+            elif reason == "atr_pct_ok":
+                range_block_reason_labels.append("atr_pct_high")
+            else:
+                range_block_reason_labels.append(reason)
 
         long_rejection = False
         short_rejection = False
@@ -393,9 +405,11 @@ class CryptoTechnicalAnalysisBybit:
             "setup_side": setup_side,
             "setup_ttl_bars": setup_ttl,
             "setup_age_bars": setup_age_bars,
+            "mr_candidate_long": bool(range_active and not breakout_guard_recent and trigger_long),
+            "mr_candidate_short": bool(range_active and not breakout_guard_recent and trigger_short),
             "candle_close_ts": int(last["timestamp"].timestamp() * 1000),
             "range_checks": range_checks,
-            "range_block_reason": range_block_reason,
+            "range_block_reason": range_block_reason_labels,
         }
 
         payload = {
@@ -436,7 +450,7 @@ class CryptoTechnicalAnalysisBybit:
                 "price_to_ema50_1h_pct": round(ema50_1h_dist, 6) if ema50_1h_dist is not None else None,
                 "atr_pct": round(atr_pct, 6) if atr_pct is not None else None,
                 "range_checks": range_checks,
-                "range_block_reason": range_block_reason,
+                "range_block_reason": range_block_reason_labels,
             },
             "last_high_1m": last_high_1m,
             "last_low_1m": last_low_1m,
