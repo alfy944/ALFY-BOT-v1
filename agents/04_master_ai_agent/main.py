@@ -16,7 +16,7 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
-STRATEGY_MODE = os.getenv("STRATEGY_MODE", "trend_breakout").lower()
+STRATEGY_MODE = os.getenv("STRATEGY_MODE", "mean_reversion").lower()
 
 # Agent URLs for reverse analysis
 AGENT_URLS = {
@@ -483,6 +483,13 @@ def build_mean_reversion_decisions(
         breakout_guard = bool(mean_rev.get("breakout_guard"))
         rsi_val = tech.get("rsi")
         bb_mid = mean_rev.get("bb_mid")
+        setup_long = bool(mean_rev.get("setup_long"))
+        setup_short = bool(mean_rev.get("setup_short"))
+        trigger_long = bool(mean_rev.get("long_signal"))
+        trigger_short = bool(mean_rev.get("short_signal"))
+        volume_ratio = tech.get("volume_ratio")
+        volume_min = float(params.get("min_volume_ratio", 1.2))
+        volume_ok = volume_ratio is not None and volume_ratio >= volume_min
 
         action = "HOLD"
         rationale = []
@@ -507,6 +514,22 @@ def build_mean_reversion_decisions(
         hard_stop_pct = float(params.get("max_hard_stop_pct", 0.0))
         size_pct = risk_based_size_pct(price, atr, leverage, risk_pct, sl_mult, hard_stop_pct=hard_stop_pct)
 
+        trend_15m = (tech.get("trend_15m") or "").upper()
+        if action == "OPEN_LONG" and trend_15m == "BEARISH":
+            size_pct *= 0.7
+            rationale.append("trend_against_soft")
+        elif action == "OPEN_SHORT" and trend_15m == "BULLISH":
+            size_pct *= 0.7
+            rationale.append("trend_against_soft")
+
+        if action in ("OPEN_LONG", "OPEN_SHORT") and volume_ratio is not None:
+            if volume_ratio < volume_min and volume_ratio >= 1.0:
+                size_pct *= 0.7
+                rationale.append("low_volume_soft_mr")
+            elif volume_ratio < 1.0:
+                action = "HOLD"
+                rationale.append("low_volume_block")
+
         score = 0.0
         if action in ("OPEN_LONG", "OPEN_SHORT"):
             score = 0.6
@@ -521,7 +544,11 @@ def build_mean_reversion_decisions(
             "leverage": leverage,
             "size_pct": size_pct if action != "HOLD" else 0.0,
             "score": score,
-            "rationale": "; ".join(rationale),
+            "rationale": "; ".join([
+                *rationale,
+                f"mr_flags range={range_active} guard={breakout_guard} setupL={setup_long} setupS={setup_short} trigL={trigger_long} trigS={trigger_short}",
+                f"volume_ratio={volume_ratio} min={volume_min} ok={volume_ok}",
+            ]),
         })
 
     return {

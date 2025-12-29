@@ -33,7 +33,7 @@ HISTORY_FILE = os.getenv("HISTORY_FILE", "equity_history.json")
 API_KEY = os.getenv("BYBIT_API_KEY")
 API_SECRET = os.getenv("BYBIT_API_SECRET")
 IS_TESTNET = os.getenv("BYBIT_TESTNET", "false").lower() == "true"
-STRATEGY_MODE = os.getenv("STRATEGY_MODE", "trend_breakout").lower()
+STRATEGY_MODE = os.getenv("STRATEGY_MODE", "mean_reversion").lower()
 
 # Se usi Hedge Mode su Bybit (posizioni long/short contemporanee),
 # metti BYBIT_HEDGE_MODE=true. Se non sei sicuro, lascialo false.
