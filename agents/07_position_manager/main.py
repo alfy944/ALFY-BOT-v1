@@ -33,6 +33,7 @@ HISTORY_FILE = os.getenv("HISTORY_FILE", "equity_history.json")
 API_KEY = os.getenv("BYBIT_API_KEY")
 API_SECRET = os.getenv("BYBIT_API_SECRET")
 IS_TESTNET = os.getenv("BYBIT_TESTNET", "false").lower() == "true"
+STRATEGY_MODE = os.getenv("STRATEGY_MODE", "mean_reversion").lower()
 
 # Se usi Hedge Mode su Bybit (posizioni long/short contemporanee),
 # metti BYBIT_HEDGE_MODE=true. Se non sei sicuro, lascialo false.
@@ -61,6 +62,7 @@ TP_PARTIAL_PCT = float(os.getenv("TP_PARTIAL_PCT", "0.5"))
 TP_PARTIAL_ATR_MULTIPLIER = float(os.getenv("TP_PARTIAL_ATR_MULTIPLIER", "1.0"))
 MICRO_SL_BUFFER_ATR = float(os.getenv("MICRO_SL_BUFFER_ATR", "0.1"))
 SL_ATR_MULTIPLIER = float(os.getenv("SL_ATR_MULTIPLIER", "1.0"))
+MAX_HARD_STOP_PCT = float(os.getenv("MAX_HARD_STOP_PCT", "0.03"))
 MIN_TP_RISK_MULT = float(os.getenv("MIN_TP_RISK_MULT", "1.3"))
 MIN_PARTIAL_TP_RISK_MULT = float(os.getenv("MIN_PARTIAL_TP_RISK_MULT", "0.7"))
 # --- BREAK-EVEN BUFFER ---
@@ -80,8 +82,9 @@ LIMIT_ENTRY_FALLBACK_MARKET = os.getenv("LIMIT_ENTRY_FALLBACK_MARKET", "false").
 MAX_ENTRY_SPREAD_PCT = float(os.getenv("MAX_ENTRY_SPREAD_PCT", "0.001"))
 MIN_ENTRY_VOLUME_RATIO = float(os.getenv("MIN_ENTRY_VOLUME_RATIO", "1.1"))
 # --- TIME-BASED EXIT ---
-TIME_EXIT_BARS = int(os.getenv("TIME_EXIT_BARS", "8"))
+TIME_EXIT_BARS = int(os.getenv("TIME_EXIT_BARS", "10"))
 TIME_EXIT_INTERVAL_MIN = int(os.getenv("TIME_EXIT_INTERVAL_MIN", "5"))
+ENTRY_INTERVAL_MIN = int(os.getenv("ENTRY_INTERVAL_MIN", "5"))
 TIME_EXIT_MIN_PROFIT_R = float(os.getenv("TIME_EXIT_MIN_PROFIT_R", "0.25"))
 TIME_EXIT_ATR_DROP_PCT = float(os.getenv("TIME_EXIT_ATR_DROP_PCT", "0.1"))
 
@@ -93,7 +96,7 @@ WARNING_THRESHOLD = float(os.getenv("WARNING_THRESHOLD", "-0.05"))
 AI_REVIEW_THRESHOLD = float(os.getenv("AI_REVIEW_THRESHOLD", "-0.08"))
 REVERSE_THRESHOLD = float(os.getenv("REVERSE_THRESHOLD", "-0.10"))
 HARD_STOP_THRESHOLD = float(os.getenv("HARD_STOP_THRESHOLD", "-0.03"))
-LOSS_COOLDOWN_MINUTES = int(os.getenv("LOSS_COOLDOWN_MINUTES", "15"))
+LOSS_COOLDOWN_MINUTES = int(os.getenv("LOSS_COOLDOWN_MINUTES", "45"))
 REVERSE_ENABLED = os.getenv("REVERSE_ENABLED", "false").lower() == "true"
 
 REVERSE_COOLDOWN_MINUTES = int(os.getenv("REVERSE_COOLDOWN_MINUTES", "30"))
@@ -103,6 +106,8 @@ reverse_cooldown_tracker: Dict[str, float] = {}
 # --- COOLDOWN CONFIGURATION ---
 COOLDOWN_MINUTES = int(os.getenv("COOLDOWN_MINUTES", "0"))
 COOLDOWN_FILE = os.getenv("COOLDOWN_FILE", "/data/closed_cooldown.json")
+DAILY_KILL_SWITCH_PCT = float(os.getenv("DAILY_KILL_SWITCH_PCT", "-0.02"))
+MAX_TRADES_PER_SYMBOL_PER_DAY = int(os.getenv("MAX_TRADES_PER_SYMBOL_PER_DAY", "6"))
 
 # --- AI DECISIONS FILE ---
 AI_DECISIONS_FILE = os.getenv("AI_DECISIONS_FILE", "/data/ai_decisions.json")
@@ -114,6 +119,7 @@ DEFAULT_SIZE_PCT = float(os.getenv("DEFAULT_SIZE_PCT", "0.15"))
 
 file_lock = Lock()
 position_risk_meta: Dict[str, dict] = {}
+last_entry_candle_ts: Dict[str, int] = {}
 
 # =========================================================
 # HELPERS
@@ -338,6 +344,54 @@ def record_order_intent(data: Dict[str, Any]) -> None:
     intents = intents[-200:]
     save_json(ORDER_INTENTS_FILE, intents)
 
+def daily_loss_breached() -> bool:
+    if DAILY_KILL_SWITCH_PCT >= 0:
+        return False
+    history = load_json(HISTORY_FILE, default=[])
+    if not history:
+        return False
+    today = datetime.utcnow().date()
+    todays = []
+    for entry in history:
+        ts_raw = entry.get("timestamp")
+        if not ts_raw:
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_raw)
+        except Exception:
+            continue
+        if ts.date() == today:
+            todays.append(entry)
+    if len(todays) < 2:
+        return False
+    start_equity = to_float(todays[0].get("live_equity"), 0.0)
+    latest_equity = to_float(todays[-1].get("live_equity"), 0.0)
+    if start_equity <= 0:
+        return False
+    pnl_pct = (latest_equity - start_equity) / start_equity
+    return pnl_pct <= DAILY_KILL_SWITCH_PCT
+
+def trades_today_for_symbol(symbol_id: str) -> int:
+    intents = load_json(ORDER_INTENTS_FILE, default=[])
+    today = datetime.utcnow().date()
+    count = 0
+    for intent in intents:
+        if intent.get("event") != "order_placed":
+            continue
+        sym = bybit_symbol_id(intent.get("symbol", ""))
+        if sym != symbol_id:
+            continue
+        ts_raw = intent.get("timestamp")
+        if not ts_raw:
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_raw)
+        except Exception:
+            continue
+        if ts.date() == today:
+            count += 1
+    return count
+
 # =========================================================
 # EXCHANGE SETUP
 # =========================================================
@@ -511,6 +565,7 @@ def get_market_risk_data(symbol: str) -> Dict[str, Any]:
                     "volatility": d.get("volatility"),
                     "macd_hist": to_float(d.get("macd_hist"), None),
                     "rsi": to_float(d.get("rsi"), None),
+                    "rsi_14": to_float((d.get("details", {}) or {}).get("rsi_14"), None),
                     "ema_20": to_float((d.get("details", {}) or {}).get("ema_20"), None),
                     "ema_50": to_float((d.get("details", {}) or {}).get("ema_50"), None),
                     "structure_break": d.get("structure_break") or {},
@@ -523,6 +578,10 @@ def get_market_risk_data(symbol: str) -> Dict[str, Any]:
                     "swing_low": to_float((d.get("structure_break") or {}).get("swing_low"), None),
                     "support": to_float(d.get("support"), None),
                     "resistance": to_float(d.get("resistance"), None),
+                    "bb_mid": to_float((d.get("details", {}) or {}).get("bb_mid"), None),
+                    "bb_upper": to_float((d.get("details", {}) or {}).get("bb_upper"), None),
+                    "bb_lower": to_float((d.get("details", {}) or {}).get("bb_lower"), None),
+                    "mean_reversion": d.get("mean_reversion") or {},
                 }
     except Exception:
         pass
@@ -605,6 +664,10 @@ def check_and_update_trailing_stops():
             swing_high = to_float(risk_data.get("swing_high"), None)
             support_level = to_float(risk_data.get("support"), None)
             resistance_level = to_float(risk_data.get("resistance"), None)
+            mean_rev = risk_data.get("mean_reversion") or {}
+            bb_mid = risk_data.get("bb_mid") or mean_rev.get("bb_mid")
+            range_active = mean_rev.get("range_active")
+            breakout_guard = mean_rev.get("breakout_guard")
 
             # Track initial SL distance per symbol for 1R calculations
             meta = position_risk_meta.get(sym_id, {})
@@ -629,6 +692,52 @@ def check_and_update_trailing_stops():
             risk_distance = 0.0
             if initial_sl_price and entry_price:
                 risk_distance = (entry_price - initial_sl_price) if side_dir == "long" else (initial_sl_price - entry_price)
+
+            if STRATEGY_MODE == "mean_reversion":
+                opened_at = position_risk_meta.get(sym_id, {}).get("opened_at")
+                if range_active is False:
+                    record_order_intent({
+                        "event": "regime_exit",
+                        "symbol": symbol,
+                        "side": side_dir,
+                        "reason": "range_filter_off",
+                    })
+                    execute_close_position(symbol)
+                    continue
+                if breakout_guard:
+                    record_order_intent({
+                        "event": "regime_exit",
+                        "symbol": symbol,
+                        "side": side_dir,
+                        "reason": "breakout_guard_active",
+                    })
+                    execute_close_position(symbol)
+                    continue
+
+                if bb_mid:
+                    if (side_dir == "long" and mark_price >= bb_mid) or (side_dir == "short" and mark_price <= bb_mid):
+                        record_order_intent({
+                            "event": "tp_mid_exit",
+                            "symbol": symbol,
+                            "side": side_dir,
+                            "reason": "bb_mid_reached",
+                        })
+                        execute_close_position(symbol)
+                        continue
+
+                if opened_at:
+                    elapsed_bars = (time.time() - opened_at) / (ENTRY_INTERVAL_MIN * 60)
+                    if elapsed_bars >= TIME_EXIT_BARS:
+                        record_order_intent({
+                            "event": "time_exit",
+                            "symbol": symbol,
+                            "side": side_dir,
+                            "reason": "mean_reversion_timeout",
+                        })
+                        execute_close_position(symbol)
+                        continue
+
+                continue
 
             new_sl_price = None
             profit_distance = (mark_price - entry_price) if side_dir == "long" else (entry_price - mark_price)
@@ -1520,6 +1629,32 @@ def open_position(order: OrderRequest):
         except Exception as e:
             print(f"⚠️ Errore check cooldown: {e}")
 
+        if daily_loss_breached():
+            record_order_intent({
+                "event": "entry_blocked",
+                "symbol": sym_ccxt,
+                "side": requested_side,
+                "reason": "daily_kill_switch",
+            })
+            return {
+                "status": "blocked",
+                "msg": "Daily kill switch attivo",
+            }
+
+        trades_today = trades_today_for_symbol(sym_id)
+        if MAX_TRADES_PER_SYMBOL_PER_DAY > 0 and trades_today >= MAX_TRADES_PER_SYMBOL_PER_DAY:
+            record_order_intent({
+                "event": "entry_blocked",
+                "symbol": sym_ccxt,
+                "side": requested_side,
+                "reason": "max_trades_per_symbol",
+                "count": trades_today,
+            })
+            return {
+                "status": "blocked",
+                "msg": f"Max trade per simbolo raggiunti ({trades_today})",
+            }
+
         # set leverage
         try:
             exchange.set_leverage(int(order.leverage), sym_ccxt, params={"category": "linear"})
@@ -1542,6 +1677,58 @@ def open_position(order: OrderRequest):
         volume_ratio = risk_data.get("volume_ratio")
         last_high_1m = risk_data.get("last_high_1m")
         last_low_1m = risk_data.get("last_low_1m")
+        bb_mid = risk_data.get("bb_mid") or (risk_data.get("mean_reversion") or {}).get("bb_mid")
+        rsi_entry = risk_data.get("rsi_14") or risk_data.get("rsi")
+        range_active = (risk_data.get("mean_reversion") or {}).get("range_active")
+        mean_rev = risk_data.get("mean_reversion") or {}
+        candle_close_ts = mean_rev.get("candle_close_ts")
+
+        if STRATEGY_MODE == "mean_reversion":
+            if candle_close_ts:
+                last_ts = last_entry_candle_ts.get(sym_id)
+                if last_ts == candle_close_ts:
+                    record_order_intent({
+                        "event": "entry_blocked",
+                        "symbol": sym_ccxt,
+                        "side": requested_side,
+                        "reason": "candle_already_processed",
+                        "candle_close_ts": candle_close_ts,
+                    })
+                    return {"status": "blocked", "msg": "Candle already processed"}
+            if range_active is False:
+                record_order_intent({
+                    "event": "entry_blocked",
+                    "symbol": sym_ccxt,
+                    "side": requested_side,
+                    "reason": "range_filter_off",
+                })
+                return {"status": "blocked", "msg": "Range filter off"}
+            if mean_rev.get("breakout_guard", False):
+                record_order_intent({
+                    "event": "entry_blocked",
+                    "symbol": sym_ccxt,
+                    "side": requested_side,
+                    "reason": "breakout_guard_active",
+                })
+                return {"status": "blocked", "msg": "Breakout guard active"}
+            if requested_dir == "long" and not mean_rev.get("long_signal", False):
+                record_order_intent({
+                    "event": "entry_blocked",
+                    "symbol": sym_ccxt,
+                    "side": requested_side,
+                    "reason": "no_long_signal",
+                })
+                return {"status": "blocked", "msg": "No long mean reversion signal"}
+            if requested_dir == "short" and not mean_rev.get("short_signal", False):
+                record_order_intent({
+                    "event": "entry_blocked",
+                    "symbol": sym_ccxt,
+                    "side": requested_side,
+                    "reason": "no_short_signal",
+                })
+                return {"status": "blocked", "msg": "No short mean reversion signal"}
+            if candle_close_ts:
+                last_entry_candle_ts[sym_id] = candle_close_ts
 
         if spread_pct is not None and spread_pct > MAX_ENTRY_SPREAD_PCT:
             record_order_intent({
@@ -1587,22 +1774,30 @@ def open_position(order: OrderRequest):
         final_qty = float("{:f}".format(final_qty_d.normalize()))
 
         if atr_value:
-            sl_price = price - (atr_value * SL_ATR_MULTIPLIER) if requested_dir == "long" else price + (atr_value * SL_ATR_MULTIPLIER)
+            sl_distance = atr_value * SL_ATR_MULTIPLIER
+            if MAX_HARD_STOP_PCT > 0:
+                sl_distance = min(sl_distance, price * MAX_HARD_STOP_PCT)
+            sl_price = price - sl_distance if requested_dir == "long" else price + sl_distance
             micro_sl = compute_micro_sl_price(requested_dir, last_high_1m, last_low_1m, atr_value)
             if micro_sl:
                 sl_price = max(sl_price, micro_sl) if requested_dir == "long" else min(sl_price, micro_sl)
         else:
             sl_pct = float(order.sl_pct) if float(order.sl_pct) > 0 else DEFAULT_INITIAL_SL_PCT
+            if MAX_HARD_STOP_PCT > 0:
+                sl_pct = min(sl_pct, MAX_HARD_STOP_PCT)
             sl_price = price * (1 - sl_pct) if requested_dir == "long" else price * (1 + sl_pct)
         sl_str = exchange.price_to_precision(sym_ccxt, sl_price)
         risk_distance = abs(price - sl_price)
-        tp_price = compute_take_profit_price(
-            price,
-            atr_value,
-            requested_dir,
-            spread_pct=spread_pct,
-            risk_distance=risk_distance,
-        )
+        if STRATEGY_MODE == "mean_reversion" and bb_mid:
+            tp_price = bb_mid
+        else:
+            tp_price = compute_take_profit_price(
+                price,
+                atr_value,
+                requested_dir,
+                spread_pct=spread_pct,
+                risk_distance=risk_distance,
+            )
         tp_str = exchange.price_to_precision(sym_ccxt, tp_price) if tp_price else None
 
         pos_idx = direction_to_position_idx(requested_dir)
@@ -1630,6 +1825,13 @@ def open_position(order: OrderRequest):
             "order_type": res.get("type"),
             "status": res.get("status"),
             "order_id": res.get("id"),
+            "entry_price": price,
+            "atr_entry": atr_value,
+            "rsi_entry": rsi_entry,
+            "bb_mid": bb_mid,
+            "bb_upper": risk_data.get("bb_upper"),
+            "bb_lower": risk_data.get("bb_lower"),
+            "range_active": range_active,
         })
         if TP_PARTIAL_ENABLED and tp_price:
             partial_price = compute_take_profit_price(
@@ -1678,6 +1880,7 @@ def open_position(order: OrderRequest):
             "market_conditions": {**(risk_data or {}), "initial_risk_pct": round(initial_risk_pct, 4)},
             "initial_atr_pct": initial_atr_pct,
             "opened_at": time.time(),
+            "tp_price": tp_price,
         }
         return {"status": "executed", "id": res.get("id")}
 
