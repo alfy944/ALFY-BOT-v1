@@ -60,6 +60,8 @@ DEFAULT_PARAMS = {
     "range_atr_pct_threshold": 0.02,
     "mean_reversion_timeout_bars": 10,
     "max_hard_stop_pct": 0.03,
+    "mr_volume_soft_ratio": 1.2,
+    "mr_volume_hard_ratio": 0.7,
 }
 
 DEFAULT_CONTROLS = {
@@ -489,7 +491,14 @@ def build_mean_reversion_decisions(
         trigger_short = bool(mean_rev.get("short_signal"))
         volume_ratio = tech.get("volume_ratio")
         volume_min = float(params.get("min_volume_ratio", 1.2))
+        volume_soft = float(params.get("mr_volume_soft_ratio", 1.2))
+        volume_hard = float(params.get("mr_volume_hard_ratio", 0.7))
         volume_ok = volume_ratio is not None and volume_ratio >= volume_min
+        adx_1h = mean_rev.get("adx_1h")
+        ema_slope = mean_rev.get("ema50_1h_slope")
+        ema_dist = mean_rev.get("price_to_ema50_1h_pct")
+        atr_pct = mean_rev.get("atr_pct")
+        range_block_reason = mean_rev.get("range_block_reason")
 
         action = "HOLD"
         rationale = []
@@ -523,12 +532,12 @@ def build_mean_reversion_decisions(
             rationale.append("trend_against_soft")
 
         if action in ("OPEN_LONG", "OPEN_SHORT") and volume_ratio is not None:
-            if volume_ratio < volume_min and volume_ratio >= 1.0:
-                size_pct *= 0.7
-                rationale.append("low_volume_soft_mr")
-            elif volume_ratio < 1.0:
+            if volume_ratio < volume_hard:
                 action = "HOLD"
                 rationale.append("low_volume_block")
+            elif volume_ratio < volume_soft:
+                size_pct *= 0.7
+                rationale.append("low_volume_soft_mr")
 
         score = 0.0
         if action in ("OPEN_LONG", "OPEN_SHORT"):
@@ -547,7 +556,8 @@ def build_mean_reversion_decisions(
             "rationale": "; ".join([
                 *rationale,
                 f"mr_flags range={range_active} guard={breakout_guard} setupL={setup_long} setupS={setup_short} trigL={trigger_long} trigS={trigger_short}",
-                f"volume_ratio={volume_ratio} min={volume_min} ok={volume_ok}",
+                f"volume_ratio={volume_ratio} soft={volume_soft} hard={volume_hard} ok={volume_ok}",
+                f"range_diag adx_1h={adx_1h} ema_slope={ema_slope} ema_dist={ema_dist} atr_pct={atr_pct} reasons={range_block_reason}",
             ]),
         })
 
@@ -861,9 +871,15 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 d['size_pct'] = d.get('size_pct', 0.1) * 0.8
                 rationale_suffix.append('low_volume_soft')
             if is_open_action(d.get('action', '')) and vol_ratio is not None and vol_ratio < params.get("min_volume_ratio", 0.8):
-                if STRATEGY_MODE == "mean_reversion" and vol_ratio >= 1.0:
-                    d['size_pct'] = d.get('size_pct', 0.1) * 0.7
-                    rationale_suffix.append('low_volume_soft_mr')
+                if STRATEGY_MODE == "mean_reversion":
+                    vol_soft = float(params.get("mr_volume_soft_ratio", 1.2))
+                    vol_hard = float(params.get("mr_volume_hard_ratio", 0.7))
+                    if vol_ratio < vol_hard:
+                        d['action'] = 'HOLD'
+                        rationale_suffix.append('low_volume_block')
+                    elif vol_ratio < vol_soft:
+                        d['size_pct'] = d.get('size_pct', 0.1) * 0.7
+                        rationale_suffix.append('low_volume_soft_mr')
                 else:
                     d['action'] = 'HOLD'
                     rationale_suffix.append('low_liquidity')

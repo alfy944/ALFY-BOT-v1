@@ -210,10 +210,13 @@ class CryptoTechnicalAnalysisBybit:
         swing_high = float(swing_high_raw) if pd.notna(swing_high_raw) else None
         swing_low = float(swing_low_raw) if pd.notna(swing_low_raw) else None
 
-        vol_window = df["volume"].rolling(window=20).mean()
+        vol_window = df["volume"].rolling(window=20, min_periods=5).mean()
         avg_volume = vol_window.iloc[-2] if len(vol_window) >= 2 else last["volume"]
-        volume_ratio = (last["volume"] / avg_volume) if avg_volume else 0
-        volume_spike = pd.notna(avg_volume) and last["volume"] > (avg_volume * 1.5)
+        if avg_volume is not None and avg_volume > 0:
+            volume_ratio = last["volume"] / avg_volume
+        else:
+            volume_ratio = None
+        volume_spike = pd.notna(avg_volume) and avg_volume > 0 and last["volume"] > (avg_volume * 1.5)
 
         trend_5m = "BULLISH" if last["close"] > last["ema_50"] else "BEARISH"
         macd_trend = "POSITIVE" if last["macd_line"] > last["macd_signal"] else "NEGATIVE"
@@ -410,6 +413,8 @@ class CryptoTechnicalAnalysisBybit:
             "candle_close_ts": int(last["timestamp"].timestamp() * 1000),
             "range_checks": range_checks,
             "range_block_reason": range_block_reason_labels,
+            "volume_curr": round(float(last["volume"]), 6) if pd.notna(last["volume"]) else None,
+            "volume_avg": round(float(avg_volume), 6) if pd.notna(avg_volume) else None,
         }
 
         payload = {
@@ -488,7 +493,7 @@ class CryptoTechnicalAnalysisBybit:
                 "atr": round(atr_value, 2),
                 "pivot_pp": round(pp["pp"], 2),
                 "volume_avg_20": round(avg_volume, 2) if pd.notna(avg_volume) else None,
-                "volume_ratio": round(volume_ratio, 2) if volume_ratio else 0,
+                "volume_ratio": round(volume_ratio, 2) if volume_ratio is not None else None,
                 "bb_mid": round(bb_mid_val, 6) if bb_mid_val is not None else None,
                 "bb_upper": round(bb_upper_val, 6) if bb_upper_val is not None else None,
                 "bb_lower": round(bb_lower_val, 6) if bb_lower_val is not None else None,
@@ -498,6 +503,7 @@ class CryptoTechnicalAnalysisBybit:
                 "ema50_1h_slope": round(ema50_1h_slope, 6) if ema50_1h_slope is not None else None,
                 "price_to_ema50_1h_pct": round(ema50_1h_dist, 6) if ema50_1h_dist is not None else None,
                 "atr_pct": round(atr_pct, 6) if atr_pct is not None else None,
+                "volume_curr": round(float(last["volume"]), 6) if pd.notna(last["volume"]) else None,
             }
         }
         return self._sanitize_for_json(payload)
