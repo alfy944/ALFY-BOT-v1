@@ -529,6 +529,23 @@ def build_mean_reversion_decisions(
         "decisions": decisions,
     }
 
+
+def build_hold_decisions(assets_summary: Dict[str, Dict[str, Any]], reason: str) -> Dict[str, Any]:
+    decisions = []
+    for symbol in assets_summary.keys():
+        decisions.append({
+            "symbol": symbol,
+            "action": "HOLD",
+            "leverage": 1.0,
+            "size_pct": 0.0,
+            "score": 0.0,
+            "rationale": reason,
+        })
+    return {
+        "analysis_summary": reason,
+        "decisions": decisions,
+    }
+
 @app.post("/decide_batch")
 def decide_batch(payload: AnalysisPayload):
     try:
@@ -611,27 +628,31 @@ Confidence del modello: {confidence}
 USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
 """
 
-            response = client.chat.completions.create(
-                model=DEEPSEEK_MODEL,
-                messages=[
-                    {"role": "system", "content": enhanced_system_prompt},
-                    {"role": "user", "content": f"ANALIZZA E AGISCI: {json.dumps(prompt_data)}"},
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.7, # Più creatività = più trade
-            )
-            
-            # Logga i costi API per tracking DeepSeek
-            if hasattr(response, 'usage') and response.usage:
-                log_api_call(
-                    tokens_in=response.usage.prompt_tokens,
-                    tokens_out=response.usage.completion_tokens
+            try:
+                response = client.chat.completions.create(
+                    model=DEEPSEEK_MODEL,
+                    messages=[
+                        {"role": "system", "content": enhanced_system_prompt},
+                        {"role": "user", "content": f"ANALIZZA E AGISCI: {json.dumps(prompt_data)}"},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.7, # Più creatività = più trade
                 )
+                
+                # Logga i costi API per tracking DeepSeek
+                if hasattr(response, 'usage') and response.usage:
+                    log_api_call(
+                        tokens_in=response.usage.prompt_tokens,
+                        tokens_out=response.usage.completion_tokens
+                    )
 
-            content = response.choices[0].message.content
-            logger.info(f"AI Raw Response: {content}") # Debug nel log
-            
-            decision_json = json.loads(content)
+                content = response.choices[0].message.content
+                logger.info(f"AI Raw Response: {content}") # Debug nel log
+                
+                decision_json = json.loads(content)
+            except Exception as e:
+                logger.error(f"AI call failed, fallback to HOLD: {e}")
+                decision_json = build_hold_decisions(assets_summary, "llm_unavailable_hold")
 
         state = load_master_state()
         open_hour_count = count_recent_actions(state.get('decisions', []), 60, action_filter=["OPEN_LONG", "OPEN_SHORT"])
@@ -813,8 +834,12 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 d['size_pct'] = d.get('size_pct', 0.1) * 0.8
                 rationale_suffix.append('low_volume_soft')
             if is_open_action(d.get('action', '')) and vol_ratio is not None and vol_ratio < params.get("min_volume_ratio", 0.8):
-                d['action'] = 'HOLD'
-                rationale_suffix.append('low_liquidity')
+                if STRATEGY_MODE == "mean_reversion" and vol_ratio >= 1.0:
+                    d['size_pct'] = d.get('size_pct', 0.1) * 0.7
+                    rationale_suffix.append('low_volume_soft_mr')
+                else:
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('low_liquidity')
 
             # MACD momentum filter (only strong positive blocks shorts)
             macd_hist = tech.get("macd_hist")
