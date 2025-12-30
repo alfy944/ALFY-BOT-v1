@@ -77,7 +77,7 @@ QUICK_TAKE_PCT = float(os.getenv("QUICK_TAKE_PCT", "0.006"))  # take quick profi
 LIMIT_ENTRY_ENABLED = os.getenv("LIMIT_ENTRY_ENABLED", "true").lower() == "true"
 LIMIT_ENTRY_OFFSET_PCT = float(os.getenv("LIMIT_ENTRY_OFFSET_PCT", "0.0002"))  # 0.02%
 LIMIT_ENTRY_TIMEOUT_SEC = float(os.getenv("LIMIT_ENTRY_TIMEOUT_SEC", "10"))
-LIMIT_ENTRY_FALLBACK_MARKET = os.getenv("LIMIT_ENTRY_FALLBACK_MARKET", "false").lower() == "true"
+LIMIT_ENTRY_FALLBACK_MARKET = os.getenv("LIMIT_ENTRY_FALLBACK_MARKET", "true").lower() == "true"
 # --- ENTRY QUALITY FILTERS ---
 MAX_ENTRY_SPREAD_PCT = float(os.getenv("MAX_ENTRY_SPREAD_PCT", "0.001"))
 MIN_ENTRY_VOLUME_RATIO = float(os.getenv("MIN_ENTRY_VOLUME_RATIO", "1.1"))
@@ -183,6 +183,15 @@ def ccxt_symbol_from_id(exchange_obj, sym_id: str) -> Optional[str]:
     except Exception:
         pass
     return None
+
+def has_open_order(sym_ccxt: str) -> bool:
+    if not exchange:
+        return False
+    try:
+        orders = exchange.fetch_open_orders(sym_ccxt)
+        return any(o.get("status") in (None, "", "open") for o in orders)
+    except Exception:
+        return False
 
 def normalize_position_side(side_raw: str) -> Optional[str]:
     """
@@ -1597,6 +1606,18 @@ def open_position(order: OrderRequest):
         except Exception as e:
             print(f"⚠️ Errore check posizioni esistenti: {e}")
 
+        if has_open_order(sym_ccxt):
+            record_order_intent({
+                "event": "entry_blocked",
+                "symbol": sym_ccxt,
+                "side": requested_side,
+                "reason": "open_order_pending",
+            })
+            return {
+                "status": "blocked",
+                "msg": "Ordine pendente già presente",
+            }
+
         # Cooldown check
         try:
             ensure_parent_dir(COOLDOWN_FILE)
@@ -1729,8 +1750,6 @@ def open_position(order: OrderRequest):
                     "reason": "no_short_signal",
                 })
                 return {"status": "blocked", "msg": "No short mean reversion signal"}
-            if candle_close_ts:
-                last_entry_candle_ts[sym_id] = candle_close_ts
 
         if spread_pct is not None and spread_pct > MAX_ENTRY_SPREAD_PCT:
             record_order_intent({
@@ -1842,6 +1861,7 @@ def open_position(order: OrderRequest):
             params["positionIdx"] = pos_idx
 
         res = place_entry_order(sym_ccxt, requested_side, final_qty, limit_price, params)
+        order_status = (res or {}).get("status")
         record_order_intent({
             "event": "order_placed",
             "symbol": sym_ccxt,
@@ -1861,6 +1881,8 @@ def open_position(order: OrderRequest):
             "bb_lower": risk_data.get("bb_lower"),
             "range_active": range_active,
         })
+        if candle_close_ts and order_status in ("closed", "filled"):
+            last_entry_candle_ts[sym_id] = candle_close_ts
         if TP_PARTIAL_ENABLED and tp_price:
             partial_price = compute_take_profit_price(
                 price,
