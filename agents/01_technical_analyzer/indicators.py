@@ -9,7 +9,8 @@ INTERVAL_TO_BYBIT = {
 }
 
 DEFAULT_RANGE_CONFIG = {
-    "adx_threshold": 25,
+    "adx_soft_threshold": 25,
+    "adx_hard_threshold": 30,
     "ema_slope_threshold": 0.0015,  # 0.15% per candle
     "ema_dist_threshold": 0.02,     # 2%
     "atr_pct_threshold": 0.02,      # 2%
@@ -238,8 +239,9 @@ class CryptoTechnicalAnalysisBybit:
         bb_lower_val = float(last["bb_lower"]) if pd.notna(last["bb_lower"]) else None
         rsi_14_val = float(last["rsi_14"]) if pd.notna(last["rsi_14"]) else None
 
+        adx_soft_ok = adx_1h is not None and adx_1h < DEFAULT_RANGE_CONFIG["adx_soft_threshold"]
         range_checks = {
-            "adx_ok": adx_1h is not None and adx_1h < DEFAULT_RANGE_CONFIG["adx_threshold"],
+            "adx_ok": adx_1h is not None and adx_1h < DEFAULT_RANGE_CONFIG["adx_hard_threshold"],
             "ema_slope_ok": ema50_1h_slope is not None and abs(ema50_1h_slope) < DEFAULT_RANGE_CONFIG["ema_slope_threshold"],
             "ema_dist_ok": ema50_1h_dist is not None and ema50_1h_dist < DEFAULT_RANGE_CONFIG["ema_dist_threshold"],
             "atr_pct_ok": atr_pct is not None and atr_pct < DEFAULT_RANGE_CONFIG["atr_pct_threshold"],
@@ -413,6 +415,7 @@ class CryptoTechnicalAnalysisBybit:
             "candle_close_ts": int(last["timestamp"].timestamp() * 1000),
             "range_checks": range_checks,
             "range_block_reason": range_block_reason_labels,
+            "adx_soft_ok": bool(adx_soft_ok),
             "volume_curr": round(float(last["volume"]), 6) if pd.notna(last["volume"]) else None,
             "volume_avg": round(float(avg_volume), 6) if pd.notna(avg_volume) else None,
         }

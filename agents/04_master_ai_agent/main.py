@@ -489,6 +489,7 @@ def build_mean_reversion_decisions(
         setup_short = bool(mean_rev.get("setup_short"))
         trigger_long = bool(mean_rev.get("long_signal"))
         trigger_short = bool(mean_rev.get("short_signal"))
+        adx_soft_ok = bool(mean_rev.get("adx_soft_ok"))
         volume_ratio = tech.get("volume_ratio")
         volume_min = float(params.get("min_volume_ratio", 1.2))
         volume_soft = float(params.get("mr_volume_soft_ratio", 1.2))
@@ -530,6 +531,9 @@ def build_mean_reversion_decisions(
         elif action == "OPEN_SHORT" and trend_15m == "BULLISH":
             size_pct *= 0.7
             rationale.append("trend_against_soft")
+        if action in ("OPEN_LONG", "OPEN_SHORT") and not adx_soft_ok:
+            size_pct *= 0.6
+            rationale.append("adx_soft_penalty")
 
         if action in ("OPEN_LONG", "OPEN_SHORT") and volume_ratio is not None:
             if volume_ratio < volume_hard:
@@ -557,7 +561,7 @@ def build_mean_reversion_decisions(
                 *rationale,
                 f"mr_flags range={range_active} guard={breakout_guard} setupL={setup_long} setupS={setup_short} trigL={trigger_long} trigS={trigger_short}",
                 f"volume_ratio={volume_ratio} soft={volume_soft} hard={volume_hard} ok={volume_ok}",
-                f"range_diag adx_1h={adx_1h} ema_slope={ema_slope} ema_dist={ema_dist} atr_pct={atr_pct} reasons={range_block_reason}",
+                f"range_diag adx_1h={adx_1h} soft_ok={adx_soft_ok} ema_slope={ema_slope} ema_dist={ema_dist} atr_pct={atr_pct} reasons={range_block_reason}",
             ]),
         })
 

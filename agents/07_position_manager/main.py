@@ -81,6 +81,8 @@ LIMIT_ENTRY_FALLBACK_MARKET = os.getenv("LIMIT_ENTRY_FALLBACK_MARKET", "false").
 # --- ENTRY QUALITY FILTERS ---
 MAX_ENTRY_SPREAD_PCT = float(os.getenv("MAX_ENTRY_SPREAD_PCT", "0.001"))
 MIN_ENTRY_VOLUME_RATIO = float(os.getenv("MIN_ENTRY_VOLUME_RATIO", "1.1"))
+MR_VOLUME_SOFT_RATIO = float(os.getenv("MR_VOLUME_SOFT_RATIO", "1.2"))
+MR_VOLUME_HARD_RATIO = float(os.getenv("MR_VOLUME_HARD_RATIO", "0.7"))
 # --- TIME-BASED EXIT ---
 TIME_EXIT_BARS = int(os.getenv("TIME_EXIT_BARS", "10"))
 TIME_EXIT_INTERVAL_MIN = int(os.getenv("TIME_EXIT_INTERVAL_MIN", "5"))
@@ -1745,18 +1747,44 @@ def open_position(order: OrderRequest):
             }
 
         if volume_ratio is not None and volume_ratio < MIN_ENTRY_VOLUME_RATIO:
-            record_order_intent({
-                "event": "entry_blocked",
-                "symbol": sym_ccxt,
-                "side": requested_side,
-                "reason": "low_volume_ratio",
-                "volume_ratio": volume_ratio,
-            })
-            return {
-                "status": "blocked",
-                "msg": f"Volume ratio troppo basso ({volume_ratio:.2f})",
-                "volume_ratio": volume_ratio,
-            }
+            if STRATEGY_MODE == "mean_reversion":
+                if volume_ratio < MR_VOLUME_HARD_RATIO:
+                    record_order_intent({
+                        "event": "entry_blocked",
+                        "symbol": sym_ccxt,
+                        "side": requested_side,
+                        "reason": "low_volume_hard_mr",
+                        "volume_ratio": volume_ratio,
+                        "volume_soft": MR_VOLUME_SOFT_RATIO,
+                        "volume_hard": MR_VOLUME_HARD_RATIO,
+                    })
+                    return {
+                        "status": "blocked",
+                        "msg": f"Volume ratio troppo basso ({volume_ratio:.2f})",
+                        "volume_ratio": volume_ratio,
+                    }
+                record_order_intent({
+                    "event": "entry_soft_allow",
+                    "symbol": sym_ccxt,
+                    "side": requested_side,
+                    "reason": "low_volume_soft_mr",
+                    "volume_ratio": volume_ratio,
+                    "volume_soft": MR_VOLUME_SOFT_RATIO,
+                    "volume_hard": MR_VOLUME_HARD_RATIO,
+                })
+            else:
+                record_order_intent({
+                    "event": "entry_blocked",
+                    "symbol": sym_ccxt,
+                    "side": requested_side,
+                    "reason": "low_volume_ratio",
+                    "volume_ratio": volume_ratio,
+                })
+                return {
+                    "status": "blocked",
+                    "msg": f"Volume ratio troppo basso ({volume_ratio:.2f})",
+                    "volume_ratio": volume_ratio,
+                }
 
         target_market = exchange.market(sym_ccxt)
         info = target_market.get("info", {}) or {}
