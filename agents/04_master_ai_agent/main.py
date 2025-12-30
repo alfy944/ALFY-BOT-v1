@@ -494,7 +494,8 @@ def build_mean_reversion_decisions(
         volume_min = float(params.get("min_volume_ratio", 1.2))
         volume_soft = float(params.get("mr_volume_soft_ratio", 1.2))
         volume_hard = float(params.get("mr_volume_hard_ratio", 0.7))
-        volume_ok = volume_ratio is not None and volume_ratio >= volume_min
+        volume_pass = volume_ratio is not None and volume_ratio >= volume_hard
+        volume_full = volume_ratio is not None and volume_ratio >= volume_soft
         adx_1h = mean_rev.get("adx_1h")
         ema_slope = mean_rev.get("ema50_1h_slope")
         ema_dist = mean_rev.get("price_to_ema50_1h_pct")
@@ -560,7 +561,7 @@ def build_mean_reversion_decisions(
             "rationale": "; ".join([
                 *rationale,
                 f"mr_flags range={range_active} guard={breakout_guard} setupL={setup_long} setupS={setup_short} trigL={trigger_long} trigS={trigger_short}",
-                f"volume_ratio={volume_ratio} soft={volume_soft} hard={volume_hard} ok={volume_ok}",
+                f"volume_ratio={volume_ratio} soft={volume_soft} hard={volume_hard} pass={volume_pass} full={volume_full}",
                 f"range_diag adx_1h={adx_1h} soft_ok={adx_soft_ok} ema_slope={ema_slope} ema_dist={ema_dist} atr_pct={atr_pct} reasons={range_block_reason}",
             ]),
         })
