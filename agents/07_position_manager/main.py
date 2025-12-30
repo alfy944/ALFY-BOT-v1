@@ -247,6 +247,83 @@ def compute_micro_sl_price(
         return max(last_high_1m + buffer_val, 0)
     return None
 
+def compute_initial_sl_price(
+    entry_price: float,
+    direction: str,
+    atr_value: Optional[float],
+    spread_pct: Optional[float],
+    last_high_1m: Optional[float],
+    last_low_1m: Optional[float],
+) -> Optional[float]:
+    if entry_price <= 0:
+        return None
+    if atr_value:
+        sl_distance = atr_value * SL_ATR_MULTIPLIER
+        if MAX_HARD_STOP_PCT > 0:
+            sl_distance = min(sl_distance, entry_price * MAX_HARD_STOP_PCT)
+        sl_price = entry_price - sl_distance if direction == "long" else entry_price + sl_distance
+        micro_sl_allowed = spread_pct is None or spread_pct <= (MAX_ENTRY_SPREAD_PCT * 0.6)
+        if micro_sl_allowed:
+            micro_sl = compute_micro_sl_price(direction, last_high_1m, last_low_1m, atr_value)
+            if micro_sl:
+                min_sl_distance = atr_value * 0.6
+                if direction == "long":
+                    min_sl_price = entry_price - min_sl_distance
+                    sl_price = max(sl_price, min_sl_price)
+                    sl_price = max(sl_price, micro_sl)
+                else:
+                    min_sl_price = entry_price + min_sl_distance
+                    sl_price = min(sl_price, min_sl_price)
+                    sl_price = min(sl_price, micro_sl)
+        return sl_price
+    sl_pct = DEFAULT_INITIAL_SL_PCT
+    if MAX_HARD_STOP_PCT > 0:
+        sl_pct = min(sl_pct, MAX_HARD_STOP_PCT)
+    return entry_price * (1 - sl_pct) if direction == "long" else entry_price * (1 + sl_pct)
+
+def update_trade_stops(
+    sym_ccxt: str,
+    sym_id: str,
+    direction: str,
+    entry_price: float,
+    atr_value: Optional[float],
+    spread_pct: Optional[float],
+    last_high_1m: Optional[float],
+    last_low_1m: Optional[float],
+    bb_mid: Optional[float],
+    position_idx: int,
+) -> Tuple[Optional[float], Optional[float]]:
+    sl_price = compute_initial_sl_price(entry_price, direction, atr_value, spread_pct, last_high_1m, last_low_1m)
+    if not sl_price:
+        return None, None
+    risk_distance = abs(entry_price - sl_price)
+    if STRATEGY_MODE == "mean_reversion" and bb_mid:
+        tp_price = bb_mid
+    else:
+        tp_price = compute_take_profit_price(
+            entry_price,
+            atr_value,
+            direction,
+            spread_pct=spread_pct,
+            risk_distance=risk_distance,
+        )
+    sl_str = exchange.price_to_precision(sym_ccxt, sl_price)
+    tp_str = exchange.price_to_precision(sym_ccxt, tp_price) if tp_price else None
+    try:
+        req = {
+            "category": "linear",
+            "symbol": sym_id,
+            "tpslMode": "Full",
+            "stopLoss": sl_str,
+            "positionIdx": position_idx,
+        }
+        if tp_str:
+            req["takeProfit"] = tp_str
+        exchange.private_post_v5_position_trading_stop(req)
+    except Exception as e:
+        print(f"⚠️ Failed to update stops after fill: {e}")
+    return sl_price, tp_price
+
 def compute_limit_entry_price(side: str, bid: float, ask: float) -> Optional[float]:
     if bid <= 0 or ask <= 0:
         return None
@@ -1820,19 +1897,16 @@ def open_position(order: OrderRequest):
             final_qty_d = Decimal(str(min_qty))
         final_qty = float("{:f}".format(final_qty_d.normalize()))
 
-        if atr_value:
-            sl_distance = atr_value * SL_ATR_MULTIPLIER
-            if MAX_HARD_STOP_PCT > 0:
-                sl_distance = min(sl_distance, price * MAX_HARD_STOP_PCT)
-            sl_price = price - sl_distance if requested_dir == "long" else price + sl_distance
-            micro_sl = compute_micro_sl_price(requested_dir, last_high_1m, last_low_1m, atr_value)
-            if micro_sl:
-                sl_price = max(sl_price, micro_sl) if requested_dir == "long" else min(sl_price, micro_sl)
-        else:
-            sl_pct = float(order.sl_pct) if float(order.sl_pct) > 0 else DEFAULT_INITIAL_SL_PCT
-            if MAX_HARD_STOP_PCT > 0:
-                sl_pct = min(sl_pct, MAX_HARD_STOP_PCT)
-            sl_price = price * (1 - sl_pct) if requested_dir == "long" else price * (1 + sl_pct)
+        sl_price = compute_initial_sl_price(
+            price,
+            requested_dir,
+            atr_value,
+            spread_pct,
+            last_high_1m,
+            last_low_1m,
+        )
+        if sl_price is None:
+            return {"status": "error", "msg": "Invalid SL price"}
         sl_str = exchange.price_to_precision(sym_ccxt, sl_price)
         risk_distance = abs(price - sl_price)
         if STRATEGY_MODE == "mean_reversion" and bb_mid:
@@ -1862,6 +1936,13 @@ def open_position(order: OrderRequest):
 
         res = place_entry_order(sym_ccxt, requested_side, final_qty, limit_price, params)
         order_status = (res or {}).get("status")
+        avg_fill_price = to_float(res.get("average") or res.get("avgPrice"), 0.0)
+        if order_status in ("closed", "filled") and avg_fill_price <= 0:
+            try:
+                fetched = exchange.fetch_order(res.get("id"), sym_ccxt)
+                avg_fill_price = to_float((fetched or {}).get("average") or (fetched or {}).get("avgPrice"), 0.0)
+            except Exception:
+                pass
         record_order_intent({
             "event": "order_placed",
             "symbol": sym_ccxt,
@@ -1881,6 +1962,23 @@ def open_position(order: OrderRequest):
             "bb_lower": risk_data.get("bb_lower"),
             "range_active": range_active,
         })
+        if order_status in ("closed", "filled") and avg_fill_price > 0:
+            updated_sl, updated_tp = update_trade_stops(
+                sym_ccxt,
+                sym_id,
+                requested_dir,
+                avg_fill_price,
+                atr_value,
+                spread_pct,
+                last_high_1m,
+                last_low_1m,
+                bb_mid,
+                pos_idx,
+            )
+            if updated_sl:
+                sl_price = updated_sl
+            if updated_tp:
+                tp_price = updated_tp
         if candle_close_ts and order_status in ("closed", "filled"):
             last_entry_candle_ts[sym_id] = candle_close_ts
         if TP_PARTIAL_ENABLED and tp_price:
@@ -1921,7 +2019,7 @@ def open_position(order: OrderRequest):
         except Exception:
             pass
         position_risk_meta[sym_id] = {
-            "entry_price": price,
+            "entry_price": avg_fill_price if avg_fill_price > 0 else price,
             "initial_sl": sl_price,
             "breakeven_reached": False,
             "size_pct": float(order.size_pct),
