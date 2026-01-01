@@ -155,12 +155,23 @@ def direction_to_position_idx(direction: str) -> int:
     One-way:
       0
     """
-    if not should_use_position_idx():
+    if not use_position_idx():
         return 0
     return 1 if direction == "long" else 2
 
 def should_use_position_idx() -> bool:
     return HEDGE_MODE and BYBIT_POSITION_MODE == "hedge"
+
+POSITION_IDX_ENABLED = should_use_position_idx()
+
+def use_position_idx() -> bool:
+    return POSITION_IDX_ENABLED
+
+def disable_position_idx(reason: str) -> None:
+    global POSITION_IDX_ENABLED
+    if POSITION_IDX_ENABLED:
+        POSITION_IDX_ENABLED = False
+        print(f"⚠️ positionIdx disabilitato: {reason}")
 
 def get_position_idx_from_position(p: dict) -> int:
     """
@@ -505,12 +516,12 @@ def check_and_update_trailing_stops():
                 continue
 
             price_str = exchange.price_to_precision(symbol, new_sl_price)
-            position_idx = get_position_idx_from_position(p) if should_use_position_idx() else 0
+            position_idx = get_position_idx_from_position(p) if use_position_idx() else 0
 
             print(
                 f"🏃 SL UPDATE {symbol} ROI={roi*100:.2f}% "
                 f"SL {sl_current} -> {price_str} (ATR={atr})"
-                f"{f' idx={position_idx}' if should_use_position_idx() else ''}"
+                f"{f' idx={position_idx}' if use_position_idx() else ''}"
             )
 
             try:
@@ -520,7 +531,7 @@ def check_and_update_trailing_stops():
                     "tpslMode": "Full",
                     "stopLoss": price_str,
                 }
-                if should_use_position_idx():
+                if use_position_idx():
                     req["positionIdx"] = position_idx
                 exchange.private_post_v5_position_trading_stop(req)
                 print("✅ SL Aggiornato con successo su Bybit")
@@ -608,7 +619,7 @@ def execute_close_position(symbol: str) -> bool:
         leverage = max(1.0, to_float(position.get("leverage"), 1.0))
         side_dir = normalize_position_side(position.get("side", "")) or "long"
 
-        position_idx = get_position_idx_from_position(position) if should_use_position_idx() else 0
+        position_idx = get_position_idx_from_position(position) if use_position_idx() else 0
 
         if entry_price > 0:
             pnl_raw = (mark_price - entry_price) / entry_price if side_dir == "long" else (entry_price - mark_price) / entry_price
@@ -622,7 +633,7 @@ def execute_close_position(symbol: str) -> bool:
         print(f"🔒 Chiudo posizione {sym_ccxt}: {side_dir} size={size} idx={position_idx}")
 
         params = {"category": "linear", "reduceOnly": True}
-        if should_use_position_idx():
+        if use_position_idx():
             params["positionIdx"] = position_idx
 
         exchange.create_order(sym_ccxt, "market", close_side, size, params=params)
@@ -721,7 +732,7 @@ def execute_reverse(symbol: str, current_side_raw: str, recovery_size_pct: float
         )
 
         params = {"category": "linear", "stopLoss": sl_str}
-        if should_use_position_idx():
+        if use_position_idx():
             params["positionIdx"] = pos_idx
 
         res = exchange.create_order(sym_ccxt, "market", new_side, final_qty, params=params)
@@ -1174,14 +1185,23 @@ def open_position(order: OrderRequest):
 
         pos_idx = direction_to_position_idx(requested_dir)
 
-        log_suffix = f" idx={pos_idx}" if should_use_position_idx() else ""
+        log_suffix = f" idx={pos_idx}" if use_position_idx() else ""
         print(f"🚀 ORDER {sym_ccxt}: side={requested_side} qty={final_qty} SL={sl_str}{log_suffix}")
 
         params = {"category": "linear", "stopLoss": sl_str}
-        if should_use_position_idx():
+        if use_position_idx():
             params["positionIdx"] = pos_idx
 
-        res = exchange.create_order(sym_ccxt, "market", requested_side, final_qty, params=params)
+        try:
+            res = exchange.create_order(sym_ccxt, "market", requested_side, final_qty, params=params)
+        except Exception as e:
+            err_msg = str(e)
+            if use_position_idx() and "position idx not match position mode" in err_msg.lower():
+                disable_position_idx("Bybit position mode mismatch")
+                params.pop("positionIdx", None)
+                res = exchange.create_order(sym_ccxt, "market", requested_side, final_qty, params=params)
+            else:
+                raise
         position_risk_meta[sym_id] = {
             "entry_price": price,
             "initial_sl": sl_price,
