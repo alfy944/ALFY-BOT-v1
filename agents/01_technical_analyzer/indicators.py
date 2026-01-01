@@ -10,6 +10,7 @@ INTERVAL_TO_BYBIT = {
 
 DEFAULT_RANGE_CONFIG = {
     "adx_soft_threshold": 20,
+    "adx_hard_threshold": 25,
 }
 
 class CryptoTechnicalAnalysisBybit:
