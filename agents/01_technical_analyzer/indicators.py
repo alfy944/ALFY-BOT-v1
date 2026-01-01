@@ -50,6 +50,12 @@ class CryptoTechnicalAnalysisBybit:
     def calculate_atr(self, high, low, close, period):
         return ta.volatility.AverageTrueRange(high, low, close, window=period).average_true_range()
 
+    def calculate_vwap(self, df: pd.DataFrame) -> pd.Series:
+        typical_price = (df["high"] + df["low"] + df["close"]) / 3.0
+        cumulative_pv = (typical_price * df["volume"]).cumsum()
+        cumulative_volume = df["volume"].cumsum()
+        return cumulative_pv / cumulative_volume
+
     def calculate_pivot_points(self, high, low, close):
         pp = (high + low + close) / 3.0
         return {
@@ -62,7 +68,10 @@ class CryptoTechnicalAnalysisBybit:
 
     def get_complete_analysis(self, ticker: str) -> Dict:
         df = self.fetch_ohlcv(ticker, "15m", limit=200)
-        if df.empty: return {}
+        df_1m = self.fetch_ohlcv(ticker, "1m", limit=200)
+        df_5m = self.fetch_ohlcv(ticker, "5m", limit=200)
+        if df.empty or df_1m.empty or df_5m.empty:
+            return {}
 
         df["ema_20"] = self.calculate_ema(df["close"], 20)
         df["ema_50"] = self.calculate_ema(df["close"], 50)
@@ -74,12 +83,27 @@ class CryptoTechnicalAnalysisBybit:
         df["rsi_14"] = self.calculate_rsi(df["close"], 14)
         df["atr_14"] = self.calculate_atr(df["high"], df["low"], df["close"], 14)
 
-        if len(df) < 3:
+        df_1m["ema_9"] = self.calculate_ema(df_1m["close"], 9)
+        df_1m["ema_21"] = self.calculate_ema(df_1m["close"], 21)
+        df_1m["ema_50"] = self.calculate_ema(df_1m["close"], 50)
+        df_1m["rsi_14"] = self.calculate_rsi(df_1m["close"], 14)
+        df_1m["atr_14"] = self.calculate_atr(df_1m["high"], df_1m["low"], df_1m["close"], 14)
+        df_1m["vwap"] = self.calculate_vwap(df_1m)
+
+        df_5m["ema_9"] = self.calculate_ema(df_5m["close"], 9)
+        df_5m["ema_21"] = self.calculate_ema(df_5m["close"], 21)
+
+        if len(df) < 3 or len(df_1m) < 3 or len(df_5m) < 3:
             return {}
 
         last = df.iloc[-1]
         prev = df.iloc[-2]
         prev2 = df.iloc[-3]
+        last_1m = df_1m.iloc[-1]
+        prev_1m = df_1m.iloc[-2]
+        last_5m = df_5m.iloc[-1]
+        prev_5m = df_5m.iloc[-2]
+
         pp = self.calculate_pivot_points(last["high"], last["low"], last["close"])
 
         trend = "BULLISH" if last["close"] > last["ema_50"] else "BEARISH"
@@ -93,22 +117,63 @@ class CryptoTechnicalAnalysisBybit:
         close_below_ema20 = last["close"] < last["ema_20"]
         close_above_ema20 = last["close"] > last["ema_20"]
 
-        long_exit_votes = sum([rsi_below_50, macd_hist_falling, close_below_ema20])
-        short_exit_votes = sum([rsi_above_50, macd_hist_rising, close_above_ema20])
+        long_exit_votes = int(sum([rsi_below_50, macd_hist_falling, close_below_ema20]))
+        short_exit_votes = int(sum([rsi_above_50, macd_hist_rising, close_above_ema20]))
+
+        ema_spread = (last_5m["ema_9"] - last_5m["ema_21"]) / last_5m["ema_21"]
+        ema_spread_abs = abs(ema_spread)
+        ema_slope_up = last_5m["ema_9"] > prev_5m["ema_9"]
+        ema_slope_down = last_5m["ema_9"] < prev_5m["ema_9"]
+        vwap_1m = last_1m["vwap"]
+        ema50_1m = last_1m["ema_50"]
+        price_above_mean = last_1m["close"] > vwap_1m
+        price_below_mean = last_1m["close"] < vwap_1m
+        mean_cross = (last_1m["close"] - vwap_1m) * (prev_1m["close"] - vwap_1m) <= 0
+
+        trend_long = (last_5m["ema_9"] > last_5m["ema_21"]) and ema_slope_up and price_above_mean
+        trend_short = (last_5m["ema_9"] < last_5m["ema_21"]) and ema_slope_down and price_below_mean
+        range_mode = (ema_spread_abs < 0.0015) and mean_cross
+
+        pullback_zone_long = last_1m["low"] <= min(last_1m["ema_9"], last_1m["ema_21"], vwap_1m)
+        pullback_zone_short = last_1m["high"] >= max(last_1m["ema_9"], last_1m["ema_21"], vwap_1m)
+        candle_reject_long = (last_1m["close"] > last_1m["open"]) and (last_1m["close"] > prev_1m["high"])
+        candle_reject_short = (last_1m["close"] < last_1m["open"]) and (last_1m["close"] < prev_1m["low"])
+        rsi_rising = last_1m["rsi_14"] > prev_1m["rsi_14"]
+        rsi_falling = last_1m["rsi_14"] < prev_1m["rsi_14"]
+
+        trend_scalp_long = trend_long and pullback_zone_long and candle_reject_long and (last_1m["rsi_14"] > 45) and rsi_rising
+        trend_scalp_short = trend_short and pullback_zone_short and candle_reject_short and (last_1m["rsi_14"] < 55) and rsi_falling
+
+        extended_below = last_1m["close"] < (vwap_1m - (0.5 * last_1m["atr_14"]))
+        extended_above = last_1m["close"] > (vwap_1m + (0.5 * last_1m["atr_14"]))
+        reclaim_vwap_long = (last_1m["close"] > vwap_1m) and (prev_1m["close"] <= vwap_1m)
+        reclaim_vwap_short = (last_1m["close"] < vwap_1m) and (prev_1m["close"] >= vwap_1m)
+        higher_low = last_1m["low"] > prev_1m["low"]
+        lower_high = last_1m["high"] < prev_1m["high"]
+
+        reversal_long = range_mode and extended_below and reclaim_vwap_long and higher_low and (last_1m["rsi_14"] < 35) and rsi_rising
+        reversal_short = range_mode and extended_above and reclaim_vwap_short and lower_high and (last_1m["rsi_14"] > 65) and rsi_falling
+
+        atr_1m = float(last_1m["atr_14"])
+        trend_sl = atr_1m * 1.0
+        trend_tp1 = atr_1m * 1.0
+        trend_tp2 = atr_1m * 1.5
+        reversal_sl = atr_1m * 1.4
+        reversal_tp = atr_1m * 1.0
 
         return {
             "symbol": ticker,
-            "price": last["close"],
+            "price": float(last["close"]),
             "trend": trend,
-            "rsi": round(last["rsi_14"], 2),
-            "rsi_7": round(last["rsi_7"], 2),
+            "rsi": float(round(last["rsi_14"], 2)),
+            "rsi_7": float(round(last["rsi_7"], 2)),
             "macd": macd_trend,
-            "macd_hist": round(last["macd_hist"], 6),
-            "support": round(last["close"] - (2 * last["atr_14"]), 2),
-            "resistance": round(last["close"] + (2 * last["atr_14"]), 2),
+            "macd_hist": float(round(last["macd_hist"], 6)),
+            "support": float(round(last["close"] - (2 * last["atr_14"]), 2)),
+            "resistance": float(round(last["close"] + (2 * last["atr_14"]), 2)),
             "momentum_exit": {
-                "long": long_exit_votes >= 2,
-                "short": short_exit_votes >= 2,
+                "long": bool(long_exit_votes >= 2),
+                "short": bool(short_exit_votes >= 2),
                 "votes": {
                     "long": long_exit_votes,
                     "short": short_exit_votes,
@@ -121,10 +186,65 @@ class CryptoTechnicalAnalysisBybit:
                 },
             },
             "details": {
-                "ema_20": round(last["ema_20"], 2),
-                "ema_50": round(last["ema_50"], 2),
-                "rsi_7": round(last["rsi_7"], 2),
-                "atr": round(last["atr_14"], 2),
-                "pivot_pp": round(pp["pp"], 2)
+                "ema_20": float(round(last["ema_20"], 2)),
+                "ema_50": float(round(last["ema_50"], 2)),
+                "rsi_7": float(round(last["rsi_7"], 2)),
+                "atr": float(round(last["atr_14"], 2)),
+                "pivot_pp": float(round(pp["pp"], 2))
+            },
+            "scalp_setup": {
+                "timeframes": {
+                    "1m": {
+                        "ema_9": float(round(last_1m["ema_9"], 2)),
+                        "ema_21": float(round(last_1m["ema_21"], 2)),
+                        "ema_50": float(round(last_1m["ema_50"], 2)),
+                        "vwap": float(round(vwap_1m, 2)),
+                        "rsi_14": float(round(last_1m["rsi_14"], 2)),
+                        "atr_14": float(round(last_1m["atr_14"], 6))
+                    },
+                    "5m": {
+                        "ema_9": float(round(last_5m["ema_9"], 2)),
+                        "ema_21": float(round(last_5m["ema_21"], 2)),
+                        "ema_spread": float(round(ema_spread, 6))
+                    }
+                },
+                "regime": {
+                    "trend_long": bool(trend_long),
+                    "trend_short": bool(trend_short),
+                    "range": bool(range_mode)
+                },
+                "trend_scalp": {
+                    "long": bool(trend_scalp_long),
+                    "short": bool(trend_scalp_short),
+                    "pullback_zone_long": bool(pullback_zone_long),
+                    "pullback_zone_short": bool(pullback_zone_short),
+                    "rsi_rising": bool(rsi_rising),
+                    "rsi_falling": bool(rsi_falling)
+                },
+                "reversal_scalp": {
+                    "long": bool(reversal_long),
+                    "short": bool(reversal_short),
+                    "extended_below": bool(extended_below),
+                    "extended_above": bool(extended_above),
+                    "reclaim_vwap_long": bool(reclaim_vwap_long),
+                    "reclaim_vwap_short": bool(reclaim_vwap_short)
+                },
+                "risk_management": {
+                    "trend": {
+                        "sl_atr": float(round(trend_sl, 6)),
+                        "tp1_atr": float(round(trend_tp1, 6)),
+                        "tp2_atr": float(round(trend_tp2, 6))
+                    },
+                    "reversal": {
+                        "sl_atr": float(round(reversal_sl, 6)),
+                        "tp_atr": float(round(reversal_tp, 6))
+                    },
+                    "break_even_r": 0.7,
+                    "time_stop_bars": 8,
+                    "cooldown_after_losses": {
+                        "losses": 2,
+                        "cooldown_minutes": 60
+                    }
+                }
             }
         }
