@@ -93,22 +93,22 @@ class CryptoTechnicalAnalysisBybit:
         close_below_ema20 = last["close"] < last["ema_20"]
         close_above_ema20 = last["close"] > last["ema_20"]
 
-        long_exit_votes = sum([rsi_below_50, macd_hist_falling, close_below_ema20])
-        short_exit_votes = sum([rsi_above_50, macd_hist_rising, close_above_ema20])
+        long_exit_votes = int(sum([rsi_below_50, macd_hist_falling, close_below_ema20]))
+        short_exit_votes = int(sum([rsi_above_50, macd_hist_rising, close_above_ema20]))
 
         return {
             "symbol": ticker,
-            "price": last["close"],
+            "price": float(last["close"]),
             "trend": trend,
-            "rsi": round(last["rsi_14"], 2),
-            "rsi_7": round(last["rsi_7"], 2),
+            "rsi": float(round(last["rsi_14"], 2)),
+            "rsi_7": float(round(last["rsi_7"], 2)),
             "macd": macd_trend,
-            "macd_hist": round(last["macd_hist"], 6),
-            "support": round(last["close"] - (2 * last["atr_14"]), 2),
-            "resistance": round(last["close"] + (2 * last["atr_14"]), 2),
+            "macd_hist": float(round(last["macd_hist"], 6)),
+            "support": float(round(last["close"] - (2 * last["atr_14"]), 2)),
+            "resistance": float(round(last["close"] + (2 * last["atr_14"]), 2)),
             "momentum_exit": {
-                "long": long_exit_votes >= 2,
-                "short": short_exit_votes >= 2,
+                "long": bool(long_exit_votes >= 2),
+                "short": bool(short_exit_votes >= 2),
                 "votes": {
                     "long": long_exit_votes,
                     "short": short_exit_votes,
@@ -121,10 +121,10 @@ class CryptoTechnicalAnalysisBybit:
                 },
             },
             "details": {
-                "ema_20": round(last["ema_20"], 2),
-                "ema_50": round(last["ema_50"], 2),
-                "rsi_7": round(last["rsi_7"], 2),
-                "atr": round(last["atr_14"], 2),
-                "pivot_pp": round(pp["pp"], 2)
+                "ema_20": float(round(last["ema_20"], 2)),
+                "ema_50": float(round(last["ema_50"], 2)),
+                "rsi_7": float(round(last["rsi_7"], 2)),
+                "atr": float(round(last["atr_14"], 2)),
+                "pivot_pp": float(round(pp["pp"], 2))
             }
         }
