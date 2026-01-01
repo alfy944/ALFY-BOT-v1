@@ -138,6 +138,11 @@ class CryptoTechnicalAnalysisBybit:
         ema50_1m = last_1m["ema_50"]
         macd_hist_1m = last_1m["macd_hist"]
         macd_hist_3m = last_3m["macd_hist"]
+        macd_hist_1m_prev = prev_1m["macd_hist"]
+        candle_long_ok = last_1m["close"] > last_1m["open"]
+        candle_short_ok = last_1m["close"] < last_1m["open"]
+        macd_hist_improving_long = macd_hist_1m > macd_hist_1m_prev
+        macd_hist_improving_short = macd_hist_1m < macd_hist_1m_prev
 
         trend_long = trend_5m == "BULLISH" and ema_dist_5m >= 0.0008
         trend_short = trend_5m == "BEARISH" and ema_dist_5m <= -0.0008
@@ -156,12 +161,16 @@ class CryptoTechnicalAnalysisBybit:
             and ema_dist_1m > 0
             and atr_pct_1m >= 0.0009
             and macd_hist_1m > 0
+            and macd_hist_improving_long
+            and candle_long_ok
         )
         trend_scalp_short = (
             mode == "TREND_SHORT"
             and ema_dist_1m < 0
             and atr_pct_1m >= 0.0009
             and macd_hist_1m < 0
+            and macd_hist_improving_short
+            and candle_short_ok
         )
 
         reversal_long = (
@@ -169,24 +178,32 @@ class CryptoTechnicalAnalysisBybit:
             and ema_dist_1m < -0.0012
             and atr_pct_1m >= 0.0011
             and macd_hist_1m > 0
+            and macd_hist_improving_long
+            and candle_long_ok
         )
         reversal_short = (
             mode == "REVERSAL"
             and ema_dist_1m > 0.0012
             and atr_pct_1m >= 0.0011
             and macd_hist_1m < 0
+            and macd_hist_improving_short
+            and candle_short_ok
         )
         extreme_reversal_long = (
             mode == "EXTREME"
             and ema_dist_1m < -0.0020
             and atr_pct_1m >= 0.0012
             and macd_hist_1m > 0
+            and macd_hist_improving_long
+            and candle_long_ok
         )
         extreme_reversal_short = (
             mode == "EXTREME"
             and ema_dist_1m > 0.0020
             and atr_pct_1m >= 0.0012
             and macd_hist_1m < 0
+            and macd_hist_improving_short
+            and candle_short_ok
         )
 
         atr_1m = float(last_1m["atr_14"])
