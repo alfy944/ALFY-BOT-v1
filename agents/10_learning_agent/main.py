@@ -18,10 +18,6 @@ EVOLUTION_INTERVAL_HOURS = int(os.getenv("EVOLUTION_INTERVAL_HOURS", "48"))
 MIN_TRADES_FOR_EVOLUTION = int(os.getenv("MIN_TRADES_FOR_EVOLUTION", "5"))
 BACKTEST_IMPROVEMENT_THRESHOLD = float(os.getenv("BACKTEST_IMPROVEMENT_THRESHOLD", "0.5"))
 MAX_STRATEGY_ARCHIVE = int(os.getenv("MAX_STRATEGY_ARCHIVE", "20"))
-RAPID_TRADE_THRESHOLD = int(os.getenv("RAPID_TRADE_THRESHOLD", "18"))
-RAPID_LOOKBACK_HOURS = int(os.getenv("RAPID_LOOKBACK_HOURS", "12"))
-RAPID_REWARD_THRESHOLD = float(os.getenv("RAPID_REWARD_THRESHOLD", "-3.0"))
-RAPID_COOLDOWN_HOURS = int(os.getenv("RAPID_COOLDOWN_HOURS", "6"))
 
 DATA_DIR = "/data"
 EVOLVED_PARAMS_FILE = f"{DATA_DIR}/evolved_params.json"
@@ -32,32 +28,28 @@ API_COSTS_FILE = f"{DATA_DIR}/api_costs.json"
 
 # Default parameters
 DEFAULT_PARAMS = {
-    "rsi_overbought": 68,
-    "rsi_oversold": 32,
-    "default_leverage": 6,
-    "size_pct": 0.10,
-    "reverse_threshold": 0.8,
-    "atr_multiplier_sl": 1.0,
-    "atr_multiplier_tp": 1.8,
-    "min_rsi_for_long": 45,
-    "max_rsi_for_short": 55,
-    "min_score_trade": 0.45,
-    "atr_sl_factor": 1.0,
-    "trailing_atr_factor": 0.7,
-    "breakeven_R": 0.6,
-    "reverse_enabled": False,
-    "max_daily_trades": 0,
-    "max_spread_pct": 0.0008,
-    "min_volume_ratio": 1.2,
-    "atr_pct_baseline": 0.003,
-    "dynamic_hour_limit": 0,
+    "rsi_overbought": 70,
+    "rsi_oversold": 30,
+    "default_leverage": 5,
+    "size_pct": 0.15,
+    "reverse_threshold": 2.0,
+    "atr_multiplier_sl": 2.0,
+    "atr_multiplier_tp": 3.0,
+    "min_rsi_for_long": 40,
+    "max_rsi_for_short": 60,
+    "min_score_trade": 0.6,
+    "atr_sl_factor": 1.2,
+    "trailing_atr_factor": 1.0,
+    "breakeven_R": 1.0,
+    "reverse_enabled": True,
+    "max_daily_trades": 3,
 }
 
 DEFAULT_CONTROLS = {
     "disable_symbols": [],
     "disable_regimes": [],
-    "max_trades_per_hour": 6,
-    "cooldown_minutes": 3,
+    "max_trades_per_hour": 0,
+    "cooldown_minutes": 0,
     "safe_mode": False,
     "max_trades_per_day": None,
     "size_cap": None,
@@ -110,9 +102,7 @@ class TradeRecord(BaseModel):
     side: str
     entry_price: float
     exit_price: Optional[float] = None
-    pnl_pct: Optional[float] = None  # legacy leveraged ROI
-    pos_roi_pct: Optional[float] = None
-    equity_return_pct: Optional[float] = None
+    pnl_pct: Optional[float] = None
     leverage: float
     size_pct: float
     duration_minutes: Optional[int] = None
@@ -161,20 +151,6 @@ def load_current_controls() -> Dict[str, Any]:
     return merged
 
 
-def trade_equity_return(trade: Dict[str, Any]) -> float:
-    if trade.get('equity_return_pct') is not None:
-        return float(trade.get('equity_return_pct') or 0)
-    # fallback: approximate using leveraged ROI times size_pct
-    base_roi = trade.get('pnl_pct') if trade.get('pnl_pct') is not None else trade.get('pos_roi_pct')
-    if base_roi is None:
-        return 0.0
-    size_pct = trade.get('size_pct', 0)
-    try:
-        return float(base_roi) * float(size_pct)
-    except Exception:
-        return 0.0
-
-
 def get_recent_trades(hours: int = 48) -> List[Dict[str, Any]]:
     """Get trades from the last N hours"""
     all_trades = load_json_file(TRADING_HISTORY_FILE, [])
@@ -210,7 +186,7 @@ def calculate_performance(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
             "losing_trades": 0,
         }
     
-    completed_trades = [t for t in trades if (t.get('pnl_pct') is not None) or (t.get('equity_return_pct') is not None)]
+    completed_trades = [t for t in trades if t.get('pnl_pct') is not None]
     
     if not completed_trades:
         return {
@@ -223,10 +199,9 @@ def calculate_performance(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
             "losing_trades": 0,
         }
     
-    equity_returns = [trade_equity_return(t) for t in completed_trades]
-    total_pnl = sum(equity_returns)
-    winning_trades = [t for t, ret in zip(completed_trades, equity_returns) if ret > 0]
-    losing_trades = [t for t, ret in zip(completed_trades, equity_returns) if ret <= 0]
+    total_pnl = sum(t.get('pnl_pct', 0) for t in completed_trades)
+    winning_trades = [t for t in completed_trades if t.get('pnl_pct', 0) > 0]
+    losing_trades = [t for t in completed_trades if t.get('pnl_pct', 0) <= 0]
     
     win_rate = len(winning_trades) / len(completed_trades) if completed_trades else 0
     
@@ -237,8 +212,8 @@ def calculate_performance(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
     cumulative_pnl = 0
     peak = 0
     max_drawdown = 0
-    for ret in equity_returns:
-        cumulative_pnl += ret
+    for trade in completed_trades:
+        cumulative_pnl += trade.get('pnl_pct', 0)
         peak = max(peak, cumulative_pnl)
         drawdown = peak - cumulative_pnl
         max_drawdown = max(max_drawdown, drawdown)
@@ -262,16 +237,16 @@ def compute_time_in_market_hours(trades: List[Dict[str, Any]]) -> float:
 def compute_useless_trades(trades: List[Dict[str, Any]]) -> int:
     useless = 0
     for t in trades:
-        equity_ret = trade_equity_return(t)
-        if equity_ret is None:
+        pnl_pct = t.get('pnl_pct')
+        if pnl_pct is None:
             continue
-        if abs(equity_ret) < 0.05:
+        if abs(pnl_pct) < 0.05:
             useless += 1  # trade chiuso a 0 / BE
             continue
         # penalizza trade piccoli (<0.3R). Usando pnl_pct come proxy quando manca R esplicito.
         initial_risk = t.get('market_conditions', {}).get('initial_risk_pct')
         baseline_r = abs(initial_risk) if initial_risk else 1.0
-        if equity_ret < 0.3 * baseline_r:
+        if pnl_pct < 0.3 * baseline_r:
             useless += 1
         if t.get('market_conditions', {}).get('regime') == 'range':
             useless += 1
@@ -325,10 +300,10 @@ def segment_trades_by_regime(trades: List[Dict[str, Any]]) -> Dict[str, List[Dic
 
     for t in trades:
         conditions = t.get('market_conditions', {}) or {}
-        regime = (conditions.get('regime') or conditions.get('trend') or '').lower()
+        regime = conditions.get('regime') or conditions.get('trend')
         volatility = conditions.get('volatility')
 
-        if regime in ('trend', 'bullish', 'bearish', 'transition'):
+        if regime in ('trend', 'bullish', 'bearish'):
             regimes["trend"].append(t)
         elif regime == 'range':
             regimes["range"].append(t)
@@ -344,27 +319,11 @@ def segment_trades_by_regime(trades: List[Dict[str, Any]]) -> Dict[str, List[Dic
 
 
 def should_enable_safe_mode(trades: List[Dict[str, Any]], drawdown: float, dd_threshold: float = 5.0) -> bool:
-    completed = [t for t in trades if (t.get('pnl_pct') is not None) or (t.get('equity_return_pct') is not None)]
+    completed = [t for t in trades if t.get('pnl_pct') is not None]
     last_three = completed[-3:]
-    if len(last_three) == 3 and all((trade_equity_return(t) <= 0) for t in last_three):
+    if len(last_three) == 3 and all((t.get('pnl_pct', 0) <= 0) for t in last_three):
         return True
     return drawdown > dd_threshold
-
-
-def rapid_adaptation_signal() -> Optional[Dict[str, Any]]:
-    """
-    Trigger an out-of-band evolution when trade volume spikes and quality drops.
-    """
-    trades = get_recent_trades(hours=RAPID_LOOKBACK_HOURS)
-    reward = compute_reward(trades)
-    trade_count = reward.get("trade_count", 0)
-    if trade_count >= RAPID_TRADE_THRESHOLD and reward.get("reward", 0) <= RAPID_REWARD_THRESHOLD:
-        return {
-            "trade_count": trade_count,
-            "reward": reward.get("reward", 0),
-            "lookback_hours": RAPID_LOOKBACK_HOURS,
-        }
-    return None
 
 
 async def call_deepseek(prompt: str) -> str:
@@ -426,25 +385,17 @@ def parse_suggestions(suggestions_json: str) -> Dict[str, Any]:
         if "max_rsi_for_short" in suggested_params:
             params["max_rsi_for_short"] = max(50, min(70, suggested_params["max_rsi_for_short"]))
         if "min_score_trade" in suggested_params:
-            params["min_score_trade"] = max(0.4, min(0.7, suggested_params["min_score_trade"]))
+            params["min_score_trade"] = max(0.55, min(0.75, suggested_params["min_score_trade"]))
         if "atr_sl_factor" in suggested_params:
             params["atr_sl_factor"] = max(1.0, min(1.8, suggested_params["atr_sl_factor"]))
         if "trailing_atr_factor" in suggested_params:
-            params["trailing_atr_factor"] = max(0.5, min(1.2, suggested_params["trailing_atr_factor"]))
+            params["trailing_atr_factor"] = max(0.8, min(1.5, suggested_params["trailing_atr_factor"]))
         if "breakeven_R" in suggested_params:
-            params["breakeven_R"] = max(0.5, min(1.2, suggested_params["breakeven_R"]))
+            params["breakeven_R"] = max(0.8, min(1.5, suggested_params["breakeven_R"]))
         if "reverse_enabled" in suggested_params:
             params["reverse_enabled"] = bool(suggested_params["reverse_enabled"])
         if "max_daily_trades" in suggested_params:
-            params["max_daily_trades"] = max(0, min(25, suggested_params["max_daily_trades"]))
-        if "max_spread_pct" in suggested_params:
-            params["max_spread_pct"] = max(0.0005, min(0.002, suggested_params["max_spread_pct"]))
-        if "min_volume_ratio" in suggested_params:
-            params["min_volume_ratio"] = max(0.8, min(2.0, suggested_params["min_volume_ratio"]))
-        if "atr_pct_baseline" in suggested_params:
-            params["atr_pct_baseline"] = max(0.001, min(0.01, suggested_params["atr_pct_baseline"]))
-        if "dynamic_hour_limit" in suggested_params:
-            params["dynamic_hour_limit"] = max(0, min(200, suggested_params["dynamic_hour_limit"]))
+            params["max_daily_trades"] = max(1, min(5, suggested_params["max_daily_trades"]))
 
         controls = DEFAULT_CONTROLS.copy()
         if "disable_symbols" in suggested_controls:
@@ -473,23 +424,22 @@ def backtest_strategy(trades: List[Dict[str, Any]], new_params: Dict[str, Any]) 
     Simple backtest: simulate how trades would have performed with new parameters.
     This is a simplified version - in practice, you'd re-evaluate entry/exit decisions.
     """
+    # For simplicity, we'll adjust the PnL based on leverage and size changes
+    current_params = load_current_params()
+    
     adjusted_trades = []
-
+    
     for trade in trades:
         if trade.get('pnl_pct') is None:
             continue
-
-        size_ratio = new_params.get('size_pct', 0.15) / max(trade.get('size_pct', 0.15), 1e-6)
-
-        base_equity_return = trade_equity_return(trade)
-        adjusted_equity_return = base_equity_return * size_ratio
-
-        adjusted_trades.append({
-            **trade,
-            'equity_return_pct': adjusted_equity_return,
-            'pos_roi_pct': trade.get('pos_roi_pct') if trade.get('pos_roi_pct') is not None else trade.get('pnl_pct'),
-            'pnl_pct': trade.get('pnl_pct'),
-        })
+        
+        # Simulate adjustment based on parameter changes
+        leverage_ratio = new_params.get('default_leverage', 5) / current_params.get('default_leverage', 5)
+        size_ratio = new_params.get('size_pct', 0.15) / current_params.get('size_pct', 0.15)
+        
+        # Adjust PnL (simplified - real backtest would be more complex)
+        adjusted_pnl = trade['pnl_pct'] * leverage_ratio * size_ratio
+        adjusted_trades.append({**trade, 'pnl_pct': adjusted_pnl})
 
     performance = calculate_performance(adjusted_trades)
     reward_data = compute_reward(adjusted_trades)
@@ -776,37 +726,13 @@ You MUST respond ONLY with valid JSON in this format:
 async def evolution_loop():
     """Background task that runs evolution every N hours"""
     interval_seconds = EVOLUTION_INTERVAL_HOURS * 3600
-    check_seconds = min(1800, interval_seconds)  # poll for rapid triggers at most every 30min
-    logger.info(f"🔄 Starting evolution loop (every {EVOLUTION_INTERVAL_HOURS} hours, with rapid triggers)")
-
-    last_rapid_ts: Optional[datetime] = None
-    next_scheduled = datetime.now()
-
-    try:
-        await profit_evolution_cycle()
-        next_scheduled = datetime.now() + timedelta(seconds=interval_seconds)
-    except Exception as e:
-        logger.error(f"Initial evolution cycle failed: {e}")
-
+    
+    logger.info(f"🔄 Starting evolution loop (every {EVOLUTION_INTERVAL_HOURS} hours)")
+    
     while True:
-        now = datetime.now()
         try:
-            if now >= next_scheduled:
-                await profit_evolution_cycle()
-                next_scheduled = now + timedelta(seconds=interval_seconds)
-
-            rapid_meta = rapid_adaptation_signal()
-            cooldown_ok = (last_rapid_ts is None) or ((now - last_rapid_ts).total_seconds() >= RAPID_COOLDOWN_HOURS * 3600)
-            if rapid_meta and cooldown_ok:
-                logger.info(
-                    f"🚀 Rapid evolution trigger: {rapid_meta['trade_count']} trades in {rapid_meta['lookback_hours']}h with reward {rapid_meta['reward']:.2f}"
-                )
-                log_evolution("rapid_trigger", {**rapid_meta, "cooldown_hours": RAPID_COOLDOWN_HOURS})
-                await profit_evolution_cycle()
-                last_rapid_ts = datetime.now()
-                next_scheduled = max(next_scheduled, last_rapid_ts + timedelta(seconds=interval_seconds / 2))
-
-            await asyncio.sleep(check_seconds)
+            await asyncio.sleep(interval_seconds)
+            await profit_evolution_cycle()
         except Exception as e:
             logger.error(f"Evolution loop error: {e}")
             await asyncio.sleep(3600)  # Wait 1 hour on error
