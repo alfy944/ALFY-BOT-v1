@@ -126,6 +126,7 @@ class CryptoTechnicalAnalysisBybit:
         }
 
     def get_complete_analysis(self, ticker: str) -> Dict:
+        adx_1h = None
         df = self.fetch_ohlcv(ticker, "5m", limit=200)
         if df.empty: return {}
 
@@ -148,13 +149,15 @@ class CryptoTechnicalAnalysisBybit:
             last_15m = df_15m.iloc[-1]
             trend_15m = "BULLISH" if last_15m["close"] > last_15m["ema_50"] else "BEARISH"
 
-        df_1h = self.fetch_ohlcv(ticker, "1h", limit=200)
-        adx_1h = None
-        if not df_1h.empty and len(df_1h) >= 20:
-            df_1h["adx_14"] = self.calculate_adx(df_1h["high"], df_1h["low"], df_1h["close"], 14)
-            adx_1h_val = df_1h["adx_14"].iloc[-1]
-            if pd.notna(adx_1h_val):
-                adx_1h = float(adx_1h_val)
+        try:
+            df_1h = self.fetch_ohlcv(ticker, "1h", limit=200)
+            if not df_1h.empty and len(df_1h) >= 20:
+                df_1h["adx_14"] = self.calculate_adx(df_1h["high"], df_1h["low"], df_1h["close"], 14)
+                adx_1h_val = df_1h["adx_14"].iloc[-1]
+                if pd.notna(adx_1h_val):
+                    adx_1h = float(adx_1h_val)
+        except Exception:
+            adx_1h = None
 
         df["ema_20"] = self.calculate_ema(df["close"], 20)
         df["ema_50"] = self.calculate_ema(df["close"], 50)
