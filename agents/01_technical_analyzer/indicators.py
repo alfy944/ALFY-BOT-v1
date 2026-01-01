@@ -257,7 +257,8 @@ class CryptoTechnicalAnalysisBybit:
         ema50 = last["ema_50"]
         ema200 = last["ema_200"]
         atr_pct = (atr_value / last["close"] * 100) if last["close"] else 0
-        adx_soft_ok = adx_1h is not None and adx_1h < DEFAULT_RANGE_CONFIG["adx_soft_threshold"]
+        adx_1h_value = adx_1h if "adx_1h" in locals() else None
+        adx_soft_ok = adx_1h_value is not None and adx_1h_value < DEFAULT_RANGE_CONFIG["adx_soft_threshold"]
         if abs(ema20 - ema50) / last["close"] < 0.003 and atr_pct < 0.35 and (adx_soft_ok or adx_1h is None):
             regime = "range"
         elif ema20 > ema50 > ema200:
