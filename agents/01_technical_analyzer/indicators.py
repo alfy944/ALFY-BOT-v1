@@ -231,7 +231,7 @@ class CryptoTechnicalAnalysisBybit:
                 "decision_timeframe": "1m",
                 "timeframes": {
                     "1m": {
-                        "trend": trend_1m,
+                        "trend": "BULLISH" if last_1m["ema_9"] > last_1m["ema_21"] else "BEARISH",
                         "ema_9": float(round(last_1m["ema_9"], 2)),
                         "ema_21": float(round(last_1m["ema_21"], 2)),
                         "ema_50": float(round(last_1m["ema_50"], 2)),
