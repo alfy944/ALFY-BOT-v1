@@ -25,6 +25,9 @@ IS_TESTNET = os.getenv("BYBIT_TESTNET", "false").lower() == "true"
 # Se usi Hedge Mode su Bybit (posizioni long/short contemporanee),
 # metti BYBIT_HEDGE_MODE=true. Se non sei sicuro, lascialo false.
 HEDGE_MODE = os.getenv("BYBIT_HEDGE_MODE", "false").lower() == "true"
+BYBIT_POSITION_MODE = os.getenv("BYBIT_POSITION_MODE", "oneway").lower()
+BYBIT_FORCE_POSITION_IDX = os.getenv("BYBIT_FORCE_POSITION_IDX", "false").lower() == "true"
+BYBIT_ENFORCE_ONEWAY = os.getenv("BYBIT_ENFORCE_ONEWAY", "true").lower() == "true"
 
 # --- PARAMETRI TRAILING STOP DINAMICO (ATR-BASED) ---
 TRAILING_ACTIVATION_PCT = float(os.getenv("TRAILING_ACTIVATION_PCT", "0.018"))  # 1.8% (leveraged ROI fraction)
@@ -154,9 +157,33 @@ def direction_to_position_idx(direction: str) -> int:
     One-way:
       0
     """
-    if not HEDGE_MODE:
+    if not use_position_idx():
         return 0
     return 1 if direction == "long" else 2
+
+def should_use_position_idx() -> bool:
+    return (
+        HEDGE_MODE
+        and BYBIT_POSITION_MODE == "hedge"
+        and BYBIT_FORCE_POSITION_IDX
+        and not BYBIT_ENFORCE_ONEWAY
+    )
+
+POSITION_IDX_ENABLED = should_use_position_idx()
+
+def use_position_idx() -> bool:
+    return POSITION_IDX_ENABLED
+
+def disable_position_idx(reason: str) -> None:
+    global POSITION_IDX_ENABLED
+    if POSITION_IDX_ENABLED:
+        POSITION_IDX_ENABLED = False
+        print(f"⚠️ positionIdx disabilitato: {reason}")
+
+def strip_position_idx(params: dict) -> dict:
+    if BYBIT_ENFORCE_ONEWAY or BYBIT_POSITION_MODE != "hedge":
+        params.pop("positionIdx", None)
+    return params
 
 def get_position_idx_from_position(p: dict) -> int:
     """
@@ -501,11 +528,12 @@ def check_and_update_trailing_stops():
                 continue
 
             price_str = exchange.price_to_precision(symbol, new_sl_price)
-            position_idx = get_position_idx_from_position(p)
+            position_idx = get_position_idx_from_position(p) if use_position_idx() else 0
 
             print(
                 f"🏃 SL UPDATE {symbol} ROI={roi*100:.2f}% "
-                f"SL {sl_current} -> {price_str} (ATR={atr}) idx={position_idx}"
+                f"SL {sl_current} -> {price_str} (ATR={atr})"
+                f"{f' idx={position_idx}' if use_position_idx() else ''}"
             )
 
             try:
@@ -514,8 +542,10 @@ def check_and_update_trailing_stops():
                     "symbol": market_id,
                     "tpslMode": "Full",
                     "stopLoss": price_str,
-                    "positionIdx": position_idx,
                 }
+                if use_position_idx():
+                    req["positionIdx"] = position_idx
+                req = strip_position_idx(req)
                 exchange.private_post_v5_position_trading_stop(req)
                 print("✅ SL Aggiornato con successo su Bybit")
             except Exception as api_err:
@@ -602,7 +632,7 @@ def execute_close_position(symbol: str) -> bool:
         leverage = max(1.0, to_float(position.get("leverage"), 1.0))
         side_dir = normalize_position_side(position.get("side", "")) or "long"
 
-        position_idx = get_position_idx_from_position(position)
+        position_idx = get_position_idx_from_position(position) if use_position_idx() else 0
 
         if entry_price > 0:
             pnl_raw = (mark_price - entry_price) / entry_price if side_dir == "long" else (entry_price - mark_price) / entry_price
@@ -616,8 +646,9 @@ def execute_close_position(symbol: str) -> bool:
         print(f"🔒 Chiudo posizione {sym_ccxt}: {side_dir} size={size} idx={position_idx}")
 
         params = {"category": "linear", "reduceOnly": True}
-        if HEDGE_MODE:
+        if use_position_idx():
             params["positionIdx"] = position_idx
+        params = strip_position_idx(params)
 
         exchange.create_order(sym_ccxt, "market", close_side, size, params=params)
 
@@ -715,8 +746,9 @@ def execute_reverse(symbol: str, current_side_raw: str, recovery_size_pct: float
         )
 
         params = {"category": "linear", "stopLoss": sl_str}
-        if HEDGE_MODE:
+        if use_position_idx():
             params["positionIdx"] = pos_idx
+        params = strip_position_idx(params)
 
         res = exchange.create_order(sym_ccxt, "market", new_side, final_qty, params=params)
         print(f"✅ Reverse eseguito con successo: {res.get('id')}")
@@ -1168,13 +1200,26 @@ def open_position(order: OrderRequest):
 
         pos_idx = direction_to_position_idx(requested_dir)
 
-        print(f"🚀 ORDER {sym_ccxt}: side={requested_side} qty={final_qty} SL={sl_str} idx={pos_idx}")
+        log_suffix = f" idx={pos_idx}" if use_position_idx() else ""
+        print(f"🚀 ORDER {sym_ccxt}: side={requested_side} qty={final_qty} SL={sl_str}{log_suffix}")
 
         params = {"category": "linear", "stopLoss": sl_str}
-        if HEDGE_MODE:
+        if use_position_idx():
             params["positionIdx"] = pos_idx
+        params = strip_position_idx(params)
 
-        res = exchange.create_order(sym_ccxt, "market", requested_side, final_qty, params=params)
+        try:
+            params = strip_position_idx(params)
+            res = exchange.create_order(sym_ccxt, "market", requested_side, final_qty, params=params)
+        except Exception as e:
+            err_msg = str(e)
+            if use_position_idx() and "position idx not match position mode" in err_msg.lower():
+                disable_position_idx("Bybit position mode mismatch")
+                params.pop("positionIdx", None)
+                params = strip_position_idx(params)
+                res = exchange.create_order(sym_ccxt, "market", requested_side, final_qty, params=params)
+            else:
+                raise
         position_risk_meta[sym_id] = {
             "entry_price": price,
             "initial_sl": sl_price,
