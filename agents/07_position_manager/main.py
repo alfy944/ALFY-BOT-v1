@@ -26,6 +26,7 @@ IS_TESTNET = os.getenv("BYBIT_TESTNET", "false").lower() == "true"
 # metti BYBIT_HEDGE_MODE=true. Se non sei sicuro, lascialo false.
 HEDGE_MODE = os.getenv("BYBIT_HEDGE_MODE", "false").lower() == "true"
 BYBIT_POSITION_MODE = os.getenv("BYBIT_POSITION_MODE", "oneway").lower()
+BYBIT_FORCE_POSITION_IDX = os.getenv("BYBIT_FORCE_POSITION_IDX", "false").lower() == "true"
 
 # --- PARAMETRI TRAILING STOP DINAMICO (ATR-BASED) ---
 TRAILING_ACTIVATION_PCT = float(os.getenv("TRAILING_ACTIVATION_PCT", "0.018"))  # 1.8% (leveraged ROI fraction)
@@ -160,7 +161,7 @@ def direction_to_position_idx(direction: str) -> int:
     return 1 if direction == "long" else 2
 
 def should_use_position_idx() -> bool:
-    return HEDGE_MODE and BYBIT_POSITION_MODE == "hedge"
+    return HEDGE_MODE and BYBIT_POSITION_MODE == "hedge" and BYBIT_FORCE_POSITION_IDX
 
 POSITION_IDX_ENABLED = should_use_position_idx()
 
