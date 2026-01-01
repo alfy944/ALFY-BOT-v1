@@ -174,6 +174,11 @@ def disable_position_idx(reason: str) -> None:
         POSITION_IDX_ENABLED = False
         print(f"⚠️ positionIdx disabilitato: {reason}")
 
+def strip_position_idx(params: dict) -> dict:
+    if BYBIT_POSITION_MODE != "hedge":
+        params.pop("positionIdx", None)
+    return params
+
 def get_position_idx_from_position(p: dict) -> int:
     """
     Se Bybit/CCXT riporta positionIdx in info, usalo.
@@ -534,6 +539,7 @@ def check_and_update_trailing_stops():
                 }
                 if use_position_idx():
                     req["positionIdx"] = position_idx
+                req = strip_position_idx(req)
                 exchange.private_post_v5_position_trading_stop(req)
                 print("✅ SL Aggiornato con successo su Bybit")
             except Exception as api_err:
@@ -636,6 +642,7 @@ def execute_close_position(symbol: str) -> bool:
         params = {"category": "linear", "reduceOnly": True}
         if use_position_idx():
             params["positionIdx"] = position_idx
+        params = strip_position_idx(params)
 
         exchange.create_order(sym_ccxt, "market", close_side, size, params=params)
 
@@ -735,6 +742,7 @@ def execute_reverse(symbol: str, current_side_raw: str, recovery_size_pct: float
         params = {"category": "linear", "stopLoss": sl_str}
         if use_position_idx():
             params["positionIdx"] = pos_idx
+        params = strip_position_idx(params)
 
         res = exchange.create_order(sym_ccxt, "market", new_side, final_qty, params=params)
         print(f"✅ Reverse eseguito con successo: {res.get('id')}")
@@ -1192,14 +1200,17 @@ def open_position(order: OrderRequest):
         params = {"category": "linear", "stopLoss": sl_str}
         if use_position_idx():
             params["positionIdx"] = pos_idx
+        params = strip_position_idx(params)
 
         try:
+            params = strip_position_idx(params)
             res = exchange.create_order(sym_ccxt, "market", requested_side, final_qty, params=params)
         except Exception as e:
             err_msg = str(e)
             if use_position_idx() and "position idx not match position mode" in err_msg.lower():
                 disable_position_idx("Bybit position mode mismatch")
                 params.pop("positionIdx", None)
+                params = strip_position_idx(params)
                 res = exchange.create_order(sym_ccxt, "market", requested_side, final_qty, params=params)
             else:
                 raise
