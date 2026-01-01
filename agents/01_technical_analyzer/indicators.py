@@ -9,19 +9,7 @@ INTERVAL_TO_BYBIT = {
 }
 
 DEFAULT_RANGE_CONFIG = {
-    "adx_soft_threshold": 25,
-    "adx_hard_threshold": 30,
-    "ema_slope_threshold": 0.0015,  # 0.15% per candle
-    "ema_dist_threshold": 0.02,     # 2%
-    "atr_pct_threshold": 0.02,      # 2%
-    "min_checks": 3,
-    "breakout_atr_pct_threshold": 0.02,
-    "breakout_guard_lookback": 4,
-    "setup_ttl_bars": 4,
-    "rsi_setup_long": 35,
-    "rsi_setup_short": 65,
-    "rsi_trigger_long": 30,
-    "rsi_trigger_short": 70,
+    "adx_soft_threshold": 20,
 }
 
 class CryptoTechnicalAnalysisBybit:
@@ -160,6 +148,14 @@ class CryptoTechnicalAnalysisBybit:
             last_15m = df_15m.iloc[-1]
             trend_15m = "BULLISH" if last_15m["close"] > last_15m["ema_50"] else "BEARISH"
 
+        df_1h = self.fetch_ohlcv(ticker, "1h", limit=200)
+        adx_1h = None
+        if not df_1h.empty and len(df_1h) >= 20:
+            df_1h["adx_14"] = self.calculate_adx(df_1h["high"], df_1h["low"], df_1h["close"], 14)
+            adx_1h_val = df_1h["adx_14"].iloc[-1]
+            if pd.notna(adx_1h_val):
+                adx_1h = float(adx_1h_val)
+
         df["ema_20"] = self.calculate_ema(df["close"], 20)
         df["ema_50"] = self.calculate_ema(df["close"], 50)
         df["ema_200"] = self.calculate_ema(df["close"], 200)
@@ -257,8 +253,9 @@ class CryptoTechnicalAnalysisBybit:
         ema20 = last["ema_20"]
         ema50 = last["ema_50"]
         ema200 = last["ema_200"]
-        atr_pct_legacy = (atr_value / last["close"] * 100) if last["close"] else 0
-        if abs(ema20 - ema50) / last["close"] < 0.003 and atr_pct_legacy < 0.35:
+        atr_pct = (atr_value / last["close"] * 100) if last["close"] else 0
+        adx_soft_ok = adx_1h is not None and adx_1h < DEFAULT_RANGE_CONFIG["adx_soft_threshold"]
+        if abs(ema20 - ema50) / last["close"] < 0.003 and atr_pct < 0.35 and (adx_soft_ok or adx_1h is None):
             regime = "range"
         elif ema20 > ema50 > ema200:
             regime = "trend_bull"
@@ -454,6 +451,7 @@ class CryptoTechnicalAnalysisBybit:
                 "ema_200": round(last["ema_200"], 2),
                 "rsi_7": round(last["rsi_7"], 2),
                 "atr": round(atr_value, 2),
+                "adx_1h": round(adx_1h, 2) if adx_1h is not None else None,
                 "pivot_pp": round(pp["pp"], 2),
                 "volume_avg_20": round(avg_volume, 2) if pd.notna(avg_volume) else None,
                 "volume_ratio": round(volume_ratio, 2) if volume_ratio is not None else None,
