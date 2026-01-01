@@ -33,7 +33,6 @@ DEFAULT_PARAMS = {
     "rsi_oversold": 32,
     "default_leverage": 6,
     "size_pct": 0.10,
-    "risk_pct": 0.005,
     "reverse_threshold": 0.8,
     "atr_multiplier_sl": 1.0,
     "atr_multiplier_tp": 1.8,
@@ -54,14 +53,6 @@ DEFAULT_PARAMS = {
     "min_volume_ratio": 1.2,
     "atr_pct_baseline": 0.003,
     "dynamic_hour_limit": 0,
-    "range_adx_threshold": 20,
-    "range_ema_slope_threshold": 0.0015,
-    "range_ema_dist_threshold": 0.02,
-    "range_atr_pct_threshold": 0.02,
-    "mean_reversion_timeout_bars": 10,
-    "max_hard_stop_pct": 0.03,
-    "mr_volume_soft_ratio": 1.2,
-    "mr_volume_hard_ratio": 0.7,
 }
 
 DEFAULT_CONTROLS = {
@@ -731,16 +722,13 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             price = tech.get("price")
             atr_val = tech.get("atr")
             atr_pct = float(atr_val) / float(price) if atr_val and price else None
-            computed_score = None
-            if STRATEGY_MODE != "mean_reversion":
-                computed_score = weighted_score(d.get('action', ''), tech) if is_open_action(d.get('action', '')) else None
+            computed_score = weighted_score(d.get('action', ''), tech) if is_open_action(d.get('action', '')) else None
             if computed_score is not None:
                 score_val = computed_score
                 d['score'] = computed_score
             if is_open_action(d.get('action', '')):
-                if STRATEGY_MODE != "mean_reversion":
-                    d['size_pct'] = dynamic_size_pct(score_val, params, atr_pct)
-                    rationale_suffix.append('limit_entry')
+                d['size_pct'] = dynamic_size_pct(score_val, params, atr_pct)
+                rationale_suffix.append('limit_entry')
             # Detect textual intent even if the action is HOLD
             analysis_text = decision_json.get('analysis_summary', '') or ''
             text_block = f"{d.get('rationale','')} {analysis_text}"
@@ -782,77 +770,9 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
 
             # Dynamic sizing attiva: usa size in base alla qualità dello score
 
-            # Strategy mode: trend breakout/continuation only
-            if is_open_action(d.get('action', '')) and STRATEGY_MODE == "trend_breakout":
-                strong_momentum = macd_improving or (macd_hist is not None and abs(macd_hist) > 0)
-                mtf_aligned = trend_5m and trend_15m and trend_5m == trend_15m
-                if not (mtf_aligned or (trend_5m and strong_momentum)):
-                    d['action'] = 'HOLD'
-                    rationale_suffix.append('strategy_mtf_align')
-                elif d.get('action') == "OPEN_LONG" and trend_5m != "BULLISH":
-                    d['action'] = 'HOLD'
-                    rationale_suffix.append('strategy_trend_bias')
-                elif d.get('action') == "OPEN_SHORT" and trend_5m != "BEARISH":
-                    d['action'] = 'HOLD'
-                    rationale_suffix.append('strategy_trend_bias')
-                elif ema20 and price:
-                    ema_buffer = 0.3 * (atr_val or 0)
-                    if d.get('action') == "OPEN_LONG" and price < (ema20 - ema_buffer):
-                        d['action'] = 'HOLD'
-                        rationale_suffix.append('strategy_ema_guard')
-                    elif d.get('action') == "OPEN_SHORT" and price > (ema20 + ema_buffer):
-                        d['action'] = 'HOLD'
-                        rationale_suffix.append('strategy_ema_guard')
-                if is_open_action(d.get('action', '')):
-                    breakout_ok = False
-                    if d.get('action') == "OPEN_LONG":
-                        breakout_ok = bool(breakout_long or structure_break.get("long") or (high_20 and price and price > high_20))
-                    elif d.get('action') == "OPEN_SHORT":
-                        breakout_ok = bool(breakout_short or structure_break.get("short") or (low_20 and price and price < low_20))
-                    macd_ok = macd_improving or (macd_hist is not None and ((d.get('action') == "OPEN_LONG" and macd_hist > 0) or (d.get('action') == "OPEN_SHORT" and macd_hist < 0)))
-                    if not (breakout_ok or macd_ok):
-                        d['action'] = 'HOLD'
-                        rationale_suffix.append('strategy_breakout_momentum')
-
-                if is_open_action(d.get('action', '')) and volume_ratio is not None and volume_ratio < max(0.9, params.get("min_volume_ratio", 1.2)):
-                    d['action'] = 'HOLD'
-                    rationale_suffix.append('strategy_volume_gate')
-
-                if is_open_action(d.get('action', '')) and regime_val in ("range", "transition"):
-                    strict_volume = volume_ratio is not None and volume_ratio >= 1.15
-                    strict_score = (score_val or 0) >= max(params.get("trend_score_threshold", 0.25) + 0.05, 0.45)
-                    if not ((breakout_long or breakout_short) and (strict_volume or macd_improving) and strict_score):
-                        d['action'] = 'HOLD'
-                        rationale_suffix.append('strategy_range_block')
-
-            # Mean reversion gating
-            if is_open_action(d.get('action', '')) and STRATEGY_MODE == "mean_reversion":
-                mean_rev = tech.get("mean_reversion") or {}
-                range_active = bool(mean_rev.get("range_active"))
-                long_signal = bool(mean_rev.get("long_signal"))
-                short_signal = bool(mean_rev.get("short_signal"))
-                atr_pct_val = mean_rev.get("atr_pct")
-                breakout_guard = bool(mean_rev.get("breakout_guard"))
-                if not range_active:
-                    d['action'] = 'HOLD'
-                    rationale_suffix.append('range_filter_off')
-                elif breakout_guard:
-                    d['action'] = 'HOLD'
-                    rationale_suffix.append('breakout_guard_active')
-                elif d.get('action') == "OPEN_LONG" and not long_signal:
-                    d['action'] = 'HOLD'
-                    rationale_suffix.append('no_long_signal')
-                elif d.get('action') == "OPEN_SHORT" and not short_signal:
-                    d['action'] = 'HOLD'
-                    rationale_suffix.append('no_short_signal')
-                if atr_pct_val is not None and atr_pct_val > params.get("range_atr_pct_threshold", 0.02):
-                    d['action'] = 'HOLD'
-                    rationale_suffix.append('atr_pct_high')
-
             # Multi-timeframe confirmation (5m vs 15m)
             if (
-                STRATEGY_MODE != "mean_reversion"
-                and is_open_action(d.get('action', ''))
+                is_open_action(d.get('action', ''))
                 and trend_5m
                 and trend_15m
                 and trend_5m != trend_15m
@@ -876,18 +796,8 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 d['size_pct'] = d.get('size_pct', 0.1) * 0.8
                 rationale_suffix.append('low_volume_soft')
             if is_open_action(d.get('action', '')) and vol_ratio is not None and vol_ratio < params.get("min_volume_ratio", 0.8):
-                if STRATEGY_MODE == "mean_reversion":
-                    vol_soft = float(params.get("mr_volume_soft_ratio", 1.2))
-                    vol_hard = float(params.get("mr_volume_hard_ratio", 0.7))
-                    if vol_ratio < vol_hard:
-                        d['action'] = 'HOLD'
-                        rationale_suffix.append('low_volume_block')
-                    elif vol_ratio < vol_soft:
-                        d['size_pct'] = d.get('size_pct', 0.1) * 0.7
-                        rationale_suffix.append('low_volume_soft_mr')
-                else:
-                    d['action'] = 'HOLD'
-                    rationale_suffix.append('low_liquidity')
+                d['action'] = 'HOLD'
+                rationale_suffix.append('low_liquidity')
 
             # MACD momentum filter (only strong positive blocks shorts)
             macd_hist = tech.get("macd_hist")
@@ -989,7 +899,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 rationale_suffix.append('rsi_soft_short')
 
             # Distance from EMA20 (adaptive R/R filter) — only for counter-trend entries
-            if STRATEGY_MODE != "mean_reversion" and is_open_action(d.get('action', '')) and price and ema20 and atr_val:
+            if is_open_action(d.get('action', '')) and price and ema20 and atr_val:
                 main_trend = trend_15m or trend_5m
                 counter_trend = (
                     (d.get('action') == "OPEN_LONG" and main_trend == "BEARISH")
@@ -1010,7 +920,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                         rationale_suffix.append(f'distance_filter<{min_dist_required:.2f}ATR')
 
             # Pullback filter (long only)
-            if STRATEGY_MODE != "mean_reversion" and is_open_action(d.get('action', '')) and d.get('action') == "OPEN_LONG" and price and ema20 and atr_val:
+            if is_open_action(d.get('action', '')) and d.get('action') == "OPEN_LONG" and price and ema20 and atr_val:
                 near_ema = abs(price - ema20) <= (0.7 * atr_val)
                 rsi_val = tech.get("rsi") or tech.get("rsi_7") or 0
                 if not (trend_5m == "BULLISH" and near_ema and rsi_val > 40):
@@ -1018,7 +928,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                     d['action'] = 'HOLD'
 
             # Pullback filter (short only)
-            if STRATEGY_MODE != "mean_reversion" and is_open_action(d.get('action', '')) and d.get('action') == "OPEN_SHORT" and price and ema20 and atr_val:
+            if is_open_action(d.get('action', '')) and d.get('action') == "OPEN_SHORT" and price and ema20 and atr_val:
                 near_ema = abs(price - ema20) <= (0.7 * atr_val)
                 rsi_val = tech.get("rsi") or tech.get("rsi_7") or 0
                 if not (trend_5m == "BEARISH" and near_ema and rsi_val < 60):
@@ -1127,89 +1037,88 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
 
             # Quality score: count strong conditions
             conditions_true = 0
-            if STRATEGY_MODE != "mean_reversion":
-                if trend_15m and trend_5m and trend_15m == trend_5m:
-                    conditions_true += 1
-                if breakout_long and breakout_long is True and d.get('action') == "OPEN_LONG":
-                    conditions_true += 1
-                if breakout_short and breakout_short is True and d.get('action') == "OPEN_SHORT":
-                    conditions_true += 1
-                if vol_ratio is not None and vol_ratio >= 1.1:
-                    conditions_true += 1
-                if price and ema20 and atr_val and abs(price - ema20) <= (0.7 * atr_val):
-                    conditions_true += 1
-                    if trend_pullback_short:
-                        conditions_true = max(conditions_true, 3)
+            if trend_15m and trend_5m and trend_15m == trend_5m:
+                conditions_true += 1
+            if breakout_long and breakout_long is True and d.get('action') == "OPEN_LONG":
+                conditions_true += 1
+            if breakout_short and breakout_short is True and d.get('action') == "OPEN_SHORT":
+                conditions_true += 1
+            if vol_ratio is not None and vol_ratio >= 1.1:
+                conditions_true += 1
+            if price and ema20 and atr_val and abs(price - ema20) <= (0.7 * atr_val):
+                conditions_true += 1
+                if trend_pullback_short:
+                    conditions_true = max(conditions_true, 3)
 
-                if is_open_action(d.get('action', '')):
-                    if (score_val or 0) < params.get("min_score_trade", 0.40):
+            if is_open_action(d.get('action', '')):
+                if (score_val or 0) < params.get("min_score_trade", 0.40):
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('score_below_min')
+                else:
+                    path_score_ok = False
+                    if counter_trend and (score_val or 0) >= params.get("countertrend_score_threshold", 0.60):
+                        path_score_ok = True
+                    elif regime_val == "transition" and (score_val or 0) >= params.get("transition_score_threshold", 0.25):
+                        path_score_ok = True
+                    elif rsi_extreme_long and d.get('action') == "OPEN_LONG":
+                        path_score_ok = True
+                    elif rsi_extreme_short and d.get('action') == "OPEN_SHORT":
+                        path_score_ok = True
+                    elif not counter_trend and (score_val or 0) >= params.get("trend_score_threshold", 0.25):
+                        path_score_ok = True
+
+                    # Flexible override: if score is above the global minimum, allow but trim size
+                    if not path_score_ok and (score_val or 0) >= params.get("min_score_trade", 0.40):
+                        path_score_ok = True
+                        d['size_pct'] = d.get('size_pct', 0.1) * 0.5
+                        rationale_suffix.append('flex_override')
+
+                    if not path_score_ok:
                         d['action'] = 'HOLD'
-                        rationale_suffix.append('score_below_min')
-                    else:
-                        path_score_ok = False
-                        if counter_trend and (score_val or 0) >= params.get("countertrend_score_threshold", 0.60):
-                            path_score_ok = True
-                        elif regime_val == "transition" and (score_val or 0) >= params.get("transition_score_threshold", 0.25):
-                            path_score_ok = True
-                        elif rsi_extreme_long and d.get('action') == "OPEN_LONG":
-                            path_score_ok = True
-                        elif rsi_extreme_short and d.get('action') == "OPEN_SHORT":
-                            path_score_ok = True
-                        elif not counter_trend and (score_val or 0) >= params.get("trend_score_threshold", 0.25):
-                            path_score_ok = True
+                        rationale_suffix.append('quality_score_low')
 
-                        # Flexible override: if score is above the global minimum, allow but trim size
-                        if not path_score_ok and (score_val or 0) >= params.get("min_score_trade", 0.40):
-                            path_score_ok = True
-                            d['size_pct'] = d.get('size_pct', 0.1) * 0.5
-                            rationale_suffix.append('flex_override')
+            # Entry triggers (need at least one)
+            if is_open_action(d.get('action', '')) and d['action'] != 'HOLD':
+                trigger_price = False
+                trigger_momentum = False
+                trigger_time = False  # placeholder
+                last_high_5m = tech.get("last_high_5m")
+                last_low_5m = tech.get("last_low_5m")
 
-                        if not path_score_ok:
-                            d['action'] = 'HOLD'
-                            rationale_suffix.append('quality_score_low')
+                # Path-aware price triggers
+                if d.get('action') == "OPEN_LONG":
+                    if last_high_5m and price and price > last_high_5m:
+                        trigger_price = True
+                    elif breakout_long or structure_break.get("long"):
+                        trigger_price = True
+                    elif rsi_extreme_long:
+                        trigger_price = True  # allow extreme RSI to satisfy trigger
+                if d.get('action') == "OPEN_SHORT":
+                    if last_low_5m and price and price < last_low_5m:
+                        trigger_price = True
+                    elif breakout_short or structure_break.get("short"):
+                        trigger_price = True
+                    elif rsi_extreme_short:
+                        trigger_price = True  # allow extreme RSI to satisfy trigger
 
-                # Entry triggers (need at least one)
-                if is_open_action(d.get('action', '')) and d['action'] != 'HOLD':
-                    trigger_price = False
-                    trigger_momentum = False
-                    trigger_time = False  # placeholder
-                    last_high_5m = tech.get("last_high_5m")
-                    last_low_5m = tech.get("last_low_5m")
+                # Momentum trigger
+                if macd_improving or macd_small:
+                    trigger_momentum = True
 
-                    # Path-aware price triggers
-                    if d.get('action') == "OPEN_LONG":
-                        if last_high_5m and price and price > last_high_5m:
-                            trigger_price = True
-                        elif breakout_long or structure_break.get("long"):
-                            trigger_price = True
-                        elif rsi_extreme_long:
-                            trigger_price = True  # allow extreme RSI to satisfy trigger
-                    if d.get('action') == "OPEN_SHORT":
-                        if last_low_5m and price and price < last_low_5m:
-                            trigger_price = True
-                        elif breakout_short or structure_break.get("short"):
-                            trigger_price = True
-                        elif rsi_extreme_short:
-                            trigger_price = True  # allow extreme RSI to satisfy trigger
+                # If still no trigger, downgrade to HOLD
+                if not (trigger_price or trigger_momentum or trigger_time):
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('no_entry_trigger')
 
-                    # Momentum trigger
-                    if macd_improving or macd_small:
-                        trigger_momentum = True
-
-                    # If still no trigger, downgrade to HOLD
-                    if not (trigger_price or trigger_momentum or trigger_time):
-                        d['action'] = 'HOLD'
-                        rationale_suffix.append('no_entry_trigger')
-
-                # Quality floor: avoid marginal setups unless score is strong
-                if is_open_action(d.get('action', '')) and d['action'] != 'HOLD':
-                    strong_score = max(params.get("min_score_trade", 0.40) + 0.15, 0.60)
-                    if conditions_true < 2 and (score_val or 0) < strong_score:
-                        d['action'] = 'HOLD'
-                        rationale_suffix.append('quality_floor')
+            # Quality floor: avoid marginal setups unless score is strong
+            if is_open_action(d.get('action', '')) and d['action'] != 'HOLD':
+                strong_score = max(params.get("min_score_trade", 0.40) + 0.15, 0.60)
+                if conditions_true < 2 and (score_val or 0) < strong_score:
+                    d['action'] = 'HOLD'
+                    rationale_suffix.append('quality_floor')
 
             # 1m vs 5m timing: require micro trend alignment unless breakout/structure
-            if STRATEGY_MODE != "mean_reversion" and is_open_action(d.get('action', '')) and d['action'] != 'HOLD':
+            if is_open_action(d.get('action', '')) and d['action'] != 'HOLD':
                 trend_1m = (tech.get("trend_1m") or "").upper()
                 if trend_1m and trend_5m and trend_1m != trend_5m:
                     allow_micro_mismatch = bool(

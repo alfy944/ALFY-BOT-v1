@@ -139,12 +139,10 @@ class CryptoTechnicalAnalysisBybit:
 
     def get_complete_analysis(self, ticker: str) -> Dict:
         df = self.fetch_ohlcv(ticker, "5m", limit=200)
-        df = self._drop_incomplete_candle(df, "5m")
         if df.empty: return {}
 
         # Multi-timeframe for scalping (1m -> 5m -> 15m)
         df_1m = self.fetch_ohlcv(ticker, "1m", limit=200)
-        df_1m = self._drop_incomplete_candle(df_1m, "1m")
         trend_1m = None
         last_high_1m = None
         last_low_1m = None
@@ -156,30 +154,11 @@ class CryptoTechnicalAnalysisBybit:
             last_low_1m = float(last_1m["low"])
 
         df_15m = self.fetch_ohlcv(ticker, "15m", limit=200)
-        df_15m = self._drop_incomplete_candle(df_15m, "15m")
         trend_15m = None
         if not df_15m.empty and len(df_15m) >= 50:
             df_15m["ema_50"] = self.calculate_ema(df_15m["close"], 50)
             last_15m = df_15m.iloc[-1]
             trend_15m = "BULLISH" if last_15m["close"] > last_15m["ema_50"] else "BEARISH"
-
-        df_1h = self.fetch_ohlcv(ticker, "1h", limit=200)
-        df_1h = self._drop_incomplete_candle(df_1h, "1h")
-        adx_1h = None
-        ema50_1h = None
-        ema50_1h_slope = None
-        ema50_1h_dist = None
-        if not df_1h.empty and len(df_1h) >= 50:
-            df_1h["ema_50"] = self.calculate_ema(df_1h["close"], 50)
-            df_1h["adx_14"] = self.calculate_adx(df_1h["high"], df_1h["low"], df_1h["close"], 14)
-            last_1h = df_1h.iloc[-1]
-            prev_1h = df_1h.iloc[-2]
-            ema50_1h = float(last_1h["ema_50"])
-            adx_1h = float(last_1h["adx_14"])
-            if prev_1h["ema_50"]:
-                ema50_1h_slope = (last_1h["ema_50"] - prev_1h["ema_50"]) / prev_1h["ema_50"]
-            if last_1h["close"]:
-                ema50_1h_dist = abs(last_1h["close"] - last_1h["ema_50"]) / last_1h["close"]
 
         df["ema_20"] = self.calculate_ema(df["close"], 20)
         df["ema_50"] = self.calculate_ema(df["close"], 50)
@@ -440,25 +419,6 @@ class CryptoTechnicalAnalysisBybit:
             "breakout": {
                 "long": bool(breakout_long),
                 "short": bool(breakout_short),
-            },
-            "bb": {
-                "mid": round(bb_mid_val, 6) if bb_mid_val is not None else None,
-                "upper": round(bb_upper_val, 6) if bb_upper_val is not None else None,
-                "lower": round(bb_lower_val, 6) if bb_lower_val is not None else None,
-            },
-            "mean_reversion": {
-                **mean_reversion_signals,
-                "bb_mid": round(bb_mid_val, 6) if bb_mid_val is not None else None,
-                "bb_upper": round(bb_upper_val, 6) if bb_upper_val is not None else None,
-                "bb_lower": round(bb_lower_val, 6) if bb_lower_val is not None else None,
-                "rsi_14": round(rsi_14_val, 2) if rsi_14_val is not None else None,
-                "adx_1h": round(adx_1h, 2) if adx_1h is not None else None,
-                "ema50_1h": round(ema50_1h, 6) if ema50_1h is not None else None,
-                "ema50_1h_slope": round(ema50_1h_slope, 6) if ema50_1h_slope is not None else None,
-                "price_to_ema50_1h_pct": round(ema50_1h_dist, 6) if ema50_1h_dist is not None else None,
-                "atr_pct": round(atr_pct, 6) if atr_pct is not None else None,
-                "range_checks": range_checks,
-                "range_block_reason": range_block_reason_labels,
             },
             "last_high_1m": last_high_1m,
             "last_low_1m": last_low_1m,
