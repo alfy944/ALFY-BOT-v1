@@ -27,6 +27,7 @@ IS_TESTNET = os.getenv("BYBIT_TESTNET", "false").lower() == "true"
 HEDGE_MODE = os.getenv("BYBIT_HEDGE_MODE", "false").lower() == "true"
 BYBIT_POSITION_MODE = os.getenv("BYBIT_POSITION_MODE", "oneway").lower()
 BYBIT_FORCE_POSITION_IDX = os.getenv("BYBIT_FORCE_POSITION_IDX", "false").lower() == "true"
+BYBIT_ENFORCE_ONEWAY = os.getenv("BYBIT_ENFORCE_ONEWAY", "true").lower() == "true"
 
 # --- PARAMETRI TRAILING STOP DINAMICO (ATR-BASED) ---
 TRAILING_ACTIVATION_PCT = float(os.getenv("TRAILING_ACTIVATION_PCT", "0.018"))  # 1.8% (leveraged ROI fraction)
@@ -161,7 +162,12 @@ def direction_to_position_idx(direction: str) -> int:
     return 1 if direction == "long" else 2
 
 def should_use_position_idx() -> bool:
-    return HEDGE_MODE and BYBIT_POSITION_MODE == "hedge" and BYBIT_FORCE_POSITION_IDX
+    return (
+        HEDGE_MODE
+        and BYBIT_POSITION_MODE == "hedge"
+        and BYBIT_FORCE_POSITION_IDX
+        and not BYBIT_ENFORCE_ONEWAY
+    )
 
 POSITION_IDX_ENABLED = should_use_position_idx()
 
@@ -175,7 +181,7 @@ def disable_position_idx(reason: str) -> None:
         print(f"⚠️ positionIdx disabilitato: {reason}")
 
 def strip_position_idx(params: dict) -> dict:
-    if BYBIT_POSITION_MODE != "hedge":
+    if BYBIT_ENFORCE_ONEWAY or BYBIT_POSITION_MODE != "hedge":
         params.pop("positionIdx", None)
     return params
 
