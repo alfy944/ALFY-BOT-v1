@@ -133,51 +133,52 @@ class CryptoTechnicalAnalysisBybit:
         short_exit_votes = int(sum([rsi_above_50, macd_hist_rising, close_above_ema20]))
 
         ema_spread = (last_5m["ema_9"] - last_5m["ema_21"]) / last_5m["ema_21"]
-        ema_spread_abs = abs(ema_spread)
-        ema_slope_up = last_5m["ema_9"] > prev_5m["ema_9"]
-        ema_slope_down = last_5m["ema_9"] < prev_5m["ema_9"]
+        ema_dist_1m = (last_1m["ema_9"] - last_1m["ema_21"]) / last_1m["ema_21"]
+        ema_dist_5m = ema_spread
+        atr_pct_1m = last_1m["atr_14"] / last_1m["close"]
+        trend_1m = "BULLISH" if last_1m["ema_9"] > last_1m["ema_21"] else "BEARISH"
+        trend_5m = "BULLISH" if last_5m["ema_9"] > last_5m["ema_21"] else "BEARISH"
         vwap_1m = last_1m["vwap"]
         ema50_1m = last_1m["ema_50"]
-        price_above_mean = last_1m["close"] > vwap_1m
-        price_below_mean = last_1m["close"] < vwap_1m
-        mean_cross = (last_1m["close"] - vwap_1m) * (prev_1m["close"] - vwap_1m) <= 0
+        macd_hist_1m = last_1m["macd_hist"]
+        macd_hist_3m = last_3m["macd_hist"]
 
-        trend_long = (last_5m["ema_9"] > last_5m["ema_21"]) and ema_slope_up and price_above_mean
-        trend_short = (last_5m["ema_9"] < last_5m["ema_21"]) and ema_slope_down and price_below_mean
-        range_mode = (ema_spread_abs < 0.0015) and mean_cross
-        macd_not_crashing = not (macd_hist_falling and (last["macd_hist"] < 0))
+        trend_long = trend_5m == "BULLISH"
+        trend_short = trend_5m == "BEARISH"
+        if trend_long and ema_dist_5m > 0.0008:
+            regime = "TREND_LONG"
+        elif trend_short and ema_dist_5m > 0.0008:
+            regime = "TREND_SHORT"
+        else:
+            regime = "RANGE"
 
-        pullback_zone_long = last_1m["low"] <= min(last_1m["ema_9"], last_1m["ema_21"], vwap_1m)
-        pullback_zone_short = last_1m["high"] >= max(last_1m["ema_9"], last_1m["ema_21"], vwap_1m)
-        candle_reject_long = (last_1m["close"] > last_1m["open"]) and (last_1m["close"] > prev_1m["high"])
-        candle_reject_short = (last_1m["close"] < last_1m["open"]) and (last_1m["close"] < prev_1m["low"])
-        rsi_rising = last_1m["rsi_14"] > prev_1m["rsi_14"]
-        rsi_falling = last_1m["rsi_14"] < prev_1m["rsi_14"]
+        trend_scalp_long = (
+            regime == "TREND_LONG"
+            and trend_1m == "BULLISH"
+            and ema_dist_1m > 0
+            and atr_pct_1m >= 0.0009
+            and macd_hist_1m > -0.0001
+        )
+        trend_scalp_short = (
+            regime == "TREND_SHORT"
+            and trend_1m == "BEARISH"
+            and ema_dist_1m < 0
+            and atr_pct_1m >= 0.0009
+            and macd_hist_1m < 0.0001
+        )
 
-        trend_scalp_long = trend_long and macd_not_crashing and pullback_zone_long and candle_reject_long and (last_1m["rsi_14"] > 45) and rsi_rising
-        trend_scalp_short = trend_short and pullback_zone_short and candle_reject_short and (last_1m["rsi_14"] < 55) and rsi_falling
-        if trend_long:
-            trend_scalp_short = False
-
-        extended_below = last_1m["close"] < (vwap_1m - (0.5 * last_1m["atr_14"]))
-        extended_above = last_1m["close"] > (vwap_1m + (0.5 * last_1m["atr_14"]))
-        reclaim_vwap_long = (last_1m["close"] > vwap_1m) and (prev_1m["close"] <= vwap_1m)
-        reclaim_vwap_short = (last_1m["close"] < vwap_1m) and (prev_1m["close"] >= vwap_1m)
-        higher_low = last_1m["low"] > prev_1m["low"]
-        lower_high = last_1m["high"] < prev_1m["high"]
-        spike_mode = extended_below or extended_above
-        lower_high_break = lower_high and (last_1m["close"] < prev_1m["low"])
-        reclaim_loss = (prev_1m["close"] > max(vwap_1m, ema50_1m)) and (last_1m["close"] < min(vwap_1m, ema50_1m))
-        macd_hist_flip_negative = (last_1m["macd_hist"] < 0 and prev_1m["macd_hist"] >= 0) or (last_3m["macd_hist"] < 0 and prev_3m["macd_hist"] >= 0)
-        volume_spike_1m = last_1m["volume"] > (df_1m["volume"].tail(20).mean() * 1.5)
-        volume_spike_3m = last_3m["volume"] > (df_3m["volume"].tail(20).mean() * 1.5)
-        macd_volume_exhaust = macd_hist_flip_negative and (volume_spike_1m or volume_spike_3m)
-        exhaustion_short = extended_above and candle_reject_short and rsi_falling
-        exhaustion_long = extended_below and candle_reject_long and rsi_rising
-        bearish_exhaustion_confirm = lower_high_break or reclaim_loss or macd_volume_exhaust
-
-        reversal_long = (range_mode or spike_mode) and extended_below and reclaim_vwap_long and higher_low and (last_1m["rsi_14"] <= 35) and rsi_rising and exhaustion_long
-        reversal_short = (range_mode or spike_mode) and extended_above and reclaim_vwap_short and lower_high and (last_1m["rsi_14"] > 65) and rsi_falling and exhaustion_short and bearish_exhaustion_confirm
+        reversal_long = (
+            regime == "RANGE"
+            and macd_hist_1m > macd_hist_3m
+            and ema_dist_1m < -0.0012
+            and atr_pct_1m >= 0.0011
+        )
+        reversal_short = (
+            regime == "RANGE"
+            and macd_hist_1m < macd_hist_3m
+            and ema_dist_1m > 0.0012
+            and atr_pct_1m >= 0.0011
+        )
 
         atr_1m = float(last_1m["atr_14"])
         trend_sl = atr_1m * 1.0
@@ -218,14 +219,18 @@ class CryptoTechnicalAnalysisBybit:
                 "pivot_pp": float(round(pp["pp"], 2))
             },
             "scalp_setup": {
+                "decision_timeframe": "1m",
                 "timeframes": {
                     "1m": {
+                        "trend": trend_1m,
                         "ema_9": float(round(last_1m["ema_9"], 2)),
                         "ema_21": float(round(last_1m["ema_21"], 2)),
                         "ema_50": float(round(last_1m["ema_50"], 2)),
+                        "ema_dist": float(round(ema_dist_1m, 6)),
                         "vwap": float(round(vwap_1m, 2)),
                         "rsi_14": float(round(last_1m["rsi_14"], 2)),
                         "atr_14": float(round(last_1m["atr_14"], 6)),
+                        "atr_pct": float(round(atr_pct_1m, 4)),
                         "macd_hist": float(round(last_1m["macd_hist"], 6)),
                         "volume": float(round(last_1m["volume"], 6))
                     },
@@ -234,37 +239,33 @@ class CryptoTechnicalAnalysisBybit:
                         "volume": float(round(last_3m["volume"], 6))
                     },
                     "5m": {
+                        "trend": trend_5m,
                         "ema_9": float(round(last_5m["ema_9"], 2)),
                         "ema_21": float(round(last_5m["ema_21"], 2)),
-                        "ema_spread": float(round(ema_spread, 6))
+                        "ema_spread": float(round(ema_spread, 6)),
+                        "ema_dist": float(round(ema_dist_5m, 6))
                     }
                 },
                 "regime": {
+                    "mode": regime,
                     "trend_long": bool(trend_long),
                     "trend_short": bool(trend_short),
-                    "range": bool(range_mode)
+                    "range": bool(regime == "RANGE")
                 },
                 "trend_scalp": {
                     "long": bool(trend_scalp_long),
                     "short": bool(trend_scalp_short),
-                    "pullback_zone_long": bool(pullback_zone_long),
-                    "pullback_zone_short": bool(pullback_zone_short),
-                    "rsi_rising": bool(rsi_rising),
-                    "rsi_falling": bool(rsi_falling)
+                    "ema_dist_1m": float(round(ema_dist_1m, 6)),
+                    "atr_pct_1m": float(round(atr_pct_1m, 6)),
+                    "macd_hist_1m": float(round(macd_hist_1m, 6))
                 },
                 "reversal_scalp": {
                     "long": bool(reversal_long),
                     "short": bool(reversal_short),
-                    "extended_below": bool(extended_below),
-                    "extended_above": bool(extended_above),
-                    "reclaim_vwap_long": bool(reclaim_vwap_long),
-                    "reclaim_vwap_short": bool(reclaim_vwap_short),
-                    "bearish_exhaustion_confirm": bool(bearish_exhaustion_confirm),
-                    "confirmations": {
-                        "lower_high_break": bool(lower_high_break),
-                        "reclaim_loss": bool(reclaim_loss),
-                        "macd_volume_exhaust": bool(macd_volume_exhaust)
-                    }
+                    "ema_dist_1m": float(round(ema_dist_1m, 6)),
+                    "atr_pct_1m": float(round(atr_pct_1m, 6)),
+                    "macd_hist_1m": float(round(macd_hist_1m, 6)),
+                    "macd_hist_3m": float(round(macd_hist_3m, 6))
                 },
                 "risk_management": {
                     "trend": {
@@ -276,7 +277,7 @@ class CryptoTechnicalAnalysisBybit:
                     "reversal": {
                         "sl_atr": float(round(reversal_sl, 6)),
                         "tp_atr": float(round(reversal_tp, 6)),
-                        "tp_target": "vwap_or_ema50"
+                        "tp_target": "0.8r_to_1.0r"
                     },
                     "break_even_r": 0.7,
                     "time_stop_bars": 8,
