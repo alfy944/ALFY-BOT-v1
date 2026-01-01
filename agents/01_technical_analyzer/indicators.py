@@ -146,9 +146,9 @@ class CryptoTechnicalAnalysisBybit:
 
         trend_long = trend_5m == "BULLISH"
         trend_short = trend_5m == "BEARISH"
-        if trend_long and ema_dist_5m > 0.0008:
+        if trend_long and abs(ema_dist_5m) >= 0.0008:
             regime = "TREND_LONG"
-        elif trend_short and ema_dist_5m > 0.0008:
+        elif trend_short and abs(ema_dist_5m) >= 0.0008:
             regime = "TREND_SHORT"
         else:
             regime = "RANGE"
@@ -158,14 +158,14 @@ class CryptoTechnicalAnalysisBybit:
             and trend_1m == "BULLISH"
             and ema_dist_1m > 0
             and atr_pct_1m >= 0.0009
-            and macd_hist_1m > -0.0001
+            and macd_hist_1m > -0.00015
         )
         trend_scalp_short = (
             regime == "TREND_SHORT"
             and trend_1m == "BEARISH"
             and ema_dist_1m < 0
             and atr_pct_1m >= 0.0009
-            and macd_hist_1m < 0.0001
+            and macd_hist_1m < 0.00015
         )
 
         reversal_long = (
@@ -181,9 +181,14 @@ class CryptoTechnicalAnalysisBybit:
             and atr_pct_1m >= 0.0011
         )
         extreme_reversal_long = (
-            rsi_1m <= 15
-            and atr_pct_1m >= 0.0010
+            ema_dist_1m < -0.0020
+            and atr_pct_1m >= 0.0012
             and macd_hist_1m > macd_hist_3m
+        )
+        extreme_reversal_short = (
+            ema_dist_1m > 0.0020
+            and atr_pct_1m >= 0.0012
+            and macd_hist_1m < macd_hist_3m
         )
 
         atr_1m = float(last_1m["atr_14"])
@@ -192,7 +197,7 @@ class CryptoTechnicalAnalysisBybit:
         trend_tp2 = atr_1m * 1.8
         reversal_sl = atr_1m * 1.4
         reversal_tp = atr_1m * 1.0
-        extreme_reversal_sl = atr_1m * 0.8
+        extreme_reversal_sl = atr_1m * 1.4
         extreme_reversal_tp = atr_1m * 0.8
 
         return {
@@ -277,7 +282,8 @@ class CryptoTechnicalAnalysisBybit:
                 },
                 "extreme_reversal_scalp": {
                     "long": bool(extreme_reversal_long),
-                    "rsi_1m": float(round(rsi_1m, 2)),
+                    "short": bool(extreme_reversal_short),
+                    "ema_dist_1m": float(round(ema_dist_1m, 6)),
                     "atr_pct_1m": float(round(atr_pct_1m, 6)),
                     "macd_hist_1m": float(round(macd_hist_1m, 6)),
                     "macd_hist_3m": float(round(macd_hist_3m, 6))
@@ -297,9 +303,7 @@ class CryptoTechnicalAnalysisBybit:
                     "extreme_reversal": {
                         "sl_atr": float(round(extreme_reversal_sl, 6)),
                         "tp_atr": float(round(extreme_reversal_tp, 6)),
-                        "tp_max_r": 1.0,
-                        "time_stop_bars": 6,
-                        "exit_r_threshold": 0.25
+                        "tp_target": "0.8r_to_1.0r"
                     },
                     "break_even_r": 0.7,
                     "time_stop_bars": 8,
