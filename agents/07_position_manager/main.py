@@ -501,11 +501,12 @@ def check_and_update_trailing_stops():
                 continue
 
             price_str = exchange.price_to_precision(symbol, new_sl_price)
-            position_idx = get_position_idx_from_position(p)
+            position_idx = get_position_idx_from_position(p) if HEDGE_MODE else 0
 
             print(
                 f"🏃 SL UPDATE {symbol} ROI={roi*100:.2f}% "
-                f"SL {sl_current} -> {price_str} (ATR={atr}) idx={position_idx}"
+                f"SL {sl_current} -> {price_str} (ATR={atr})"
+                f"{f' idx={position_idx}' if HEDGE_MODE else ''}"
             )
 
             try:
@@ -514,8 +515,9 @@ def check_and_update_trailing_stops():
                     "symbol": market_id,
                     "tpslMode": "Full",
                     "stopLoss": price_str,
-                    "positionIdx": position_idx,
                 }
+                if HEDGE_MODE:
+                    req["positionIdx"] = position_idx
                 exchange.private_post_v5_position_trading_stop(req)
                 print("✅ SL Aggiornato con successo su Bybit")
             except Exception as api_err:
