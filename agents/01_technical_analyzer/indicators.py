@@ -11,6 +11,7 @@ INTERVAL_TO_BYBIT = {
 DEFAULT_RANGE_CONFIG = {
     "adx_soft_threshold": 20,
     "adx_hard_threshold": 25,
+    "ema_slope_threshold": 0.02,
 }
 
 class CryptoTechnicalAnalysisBybit:
@@ -150,15 +151,23 @@ class CryptoTechnicalAnalysisBybit:
             last_15m = df_15m.iloc[-1]
             trend_15m = "BULLISH" if last_15m["close"] > last_15m["ema_50"] else "BEARISH"
 
+        ema50_1h_slope = None
         try:
             df_1h = self.fetch_ohlcv(ticker, "1h", limit=200)
             if not df_1h.empty and len(df_1h) >= 20:
+                df_1h["ema_50"] = self.calculate_ema(df_1h["close"], 50)
                 df_1h["adx_14"] = self.calculate_adx(df_1h["high"], df_1h["low"], df_1h["close"], 14)
                 adx_1h_val = df_1h["adx_14"].iloc[-1]
                 if pd.notna(adx_1h_val):
                     adx_1h = float(adx_1h_val)
+                if len(df_1h) >= 2:
+                    ema_last = df_1h["ema_50"].iloc[-1]
+                    ema_prev = df_1h["ema_50"].iloc[-2]
+                    if pd.notna(ema_last) and pd.notna(ema_prev):
+                        ema50_1h_slope = float(ema_last - ema_prev)
         except Exception:
             adx_1h = None
+            ema50_1h_slope = None
 
         df["ema_20"] = self.calculate_ema(df["close"], 20)
         df["ema_50"] = self.calculate_ema(df["close"], 50)
@@ -457,6 +466,11 @@ class CryptoTechnicalAnalysisBybit:
                 "rsi_7": round(last["rsi_7"], 2),
                 "atr": round(atr_value, 2),
                 "adx_1h": round(adx_1h, 2) if adx_1h is not None else None,
+                "ema50_1h_slope": round(ema50_1h_slope, 6) if ema50_1h_slope is not None else None,
+                "ema_slope_ok": (
+                    ema50_1h_slope is not None
+                    and abs(ema50_1h_slope) < DEFAULT_RANGE_CONFIG["ema_slope_threshold"]
+                ),
                 "pivot_pp": round(pp["pp"], 2),
                 "volume_avg_20": round(avg_volume, 2) if pd.notna(avg_volume) else None,
                 "volume_ratio": round(volume_ratio, 2) if volume_ratio is not None else None,
