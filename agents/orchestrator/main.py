@@ -10,15 +10,13 @@ DEFAULT_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 
 # --- CONFIGURAZIONE OTTIMIZZAZIONE ---
 MAX_POSITIONS = 3  # Numero massimo posizioni contemporanee
-REVERSE_THRESHOLD = 1.2  # Percentuale perdita per trigger reverse analysis
+REVERSE_THRESHOLD = 2.0  # Percentuale perdita per trigger reverse analysis
 CYCLE_INTERVAL = 60  # Secondi tra ogni ciclo di controllo (era 900)
-MAX_RETRIES = 3
-RETRY_DELAY = 2  # seconds
 
 AI_DECISIONS_FILE = "/data/ai_decisions.json"
 BYBIT_TICKERS_URL = "https://api.bybit.com/v5/market/tickers"
 USE_TRENDING = os.getenv("USE_TRENDING_SYMBOLS", "true").lower() == "true"
-TRENDING_LIMIT = int(os.getenv("TRENDING_SYMBOLS_LIMIT", "5"))
+TRENDING_LIMIT = int(os.getenv("TRENDING_SYMBOLS_LIMIT", "6"))
 
 def save_monitoring_decision(positions_count: int, max_positions: int, positions_details: list, reason: str):
     """Salva la decisione di monitoraggio per la dashboard"""
@@ -64,20 +62,6 @@ async def manage_cycle():
     async with httpx.AsyncClient() as c:
         try: await c.post(f"{URLS['pos']}/manage_active_positions", timeout=5)
         except: pass
-
-
-async def post_with_retries(client: httpx.AsyncClient, url: str, **kwargs):
-    """Simple retry helper to reduce transient connection errors."""
-    last_error = None
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            return await client.post(url, **kwargs)
-        except Exception as e:
-            last_error = e
-            print(f"        ⚠️ Tentativo {attempt}/{MAX_RETRIES} fallito verso {url}: {e}")
-            if attempt < MAX_RETRIES:
-                await asyncio.sleep(RETRY_DELAY)
-    raise last_error
 
 async def fetch_trending_symbols(client: httpx.AsyncClient) -> list:
     """Fetch trending symbols from Bybit using 24h turnover as a proxy."""
@@ -144,19 +128,6 @@ async def analysis_cycle():
 
         num_positions = len(active_symbols)
         print(f"\n[{datetime.now().strftime('%H:%M')}] 📊 Position check: {num_positions}/{MAX_POSITIONS} posizioni aperte")
-        # Snapshot di monitoraggio per la dashboard solo se ci sono posizioni attive
-        if position_details:
-            losses = [p for p in position_details if p.get('pnl_pct', 0) < 0]
-            snapshot_reason = (
-                f"Monitoraggio periodico: {len(position_details)} posizioni, "
-                f"{len(losses)} in perdita"
-            )
-            save_monitoring_decision(
-                positions_count=len(position_details),
-                max_positions=MAX_POSITIONS,
-                positions_details=position_details,
-                reason=snapshot_reason
-            )
         
         # 2. LOGICA OTTIMIZZAZIONE
         positions_losing = []
@@ -250,29 +221,9 @@ async def analysis_cycle():
         assets_data = {}
         for s in scan_list:
             try:
-                resp = await post_with_retries(
-                    c,
-                    f"{URLS['tech']}/analyze_multi_tf",
-                    json={"symbol": s},
-                    timeout=30,
-                )
-
-                if resp.status_code != 200:
-                    print(f"        ❌ Tech analyzer {s} status {resp.status_code}: {resp.text}")
-                    continue
-
-                t = resp.json()
-                if not t:
-                    print(f"        ⚠️ Dati tecnici vuoti per {s}")
-                    continue
-
-                if isinstance(t, dict) and t.get("error"):
-                    print(f"        ⚠️ Tech analyzer {s} error: {t.get('error')}")
-                    continue
-
+                t = (await c.post(f"{URLS['tech']}/analyze_multi_tf", json={"symbol": s})).json()
                 assets_data[s] = {"tech": t}
-            except Exception as e:
-                print(f"        ❌ Errore nel chiamare il technical analyzer per {s}: {e}")
+            except: pass
         
         if not assets_data: 
             print("        ⚠️ Nessun dato tecnico disponibile")
@@ -287,15 +238,10 @@ async def analysis_cycle():
         # 5. AI DECISION
         print(f"        🤖 DeepSeek: Analizzando {list(assets_data.keys())}...")
         try:
-            resp = await post_with_retries(
-                c,
-                f"{URLS['ai']}/decide_batch",
-                json={
-                    "global_data": {"portfolio": portfolio, "already_open": active_symbols},
-                    "assets_data": assets_data
-                },
-                timeout=120
-            )
+            resp = await c.post(f"{URLS['ai']}/decide_batch", json={
+                "global_data": {"portfolio": portfolio, "already_open": active_symbols},
+                "assets_data": assets_data
+            }, timeout=120)
             
             dec_data = resp.json()
             analysis_text = dec_data.get('analysis', 'No text')
@@ -308,7 +254,6 @@ async def analysis_cycle():
                 return
 
             # 6. EXECUTION
-            remaining_slots = max(0, MAX_POSITIONS - len(active_symbols))
             for d in decisions_list:
                 sym = d['symbol']
                 action = d['action']
@@ -318,20 +263,14 @@ async def analysis_cycle():
                     continue
 
                 if action in ["OPEN_LONG", "OPEN_SHORT"]:
-                    if remaining_slots <= 0:
-                        print(f"        ⏳ Skip {action} su {sym}: raggiunto limite {MAX_POSITIONS} posizioni aperte")
-                        continue
-
                     print(f"        🔥 EXECUTING {action} on {sym}...")
                     res = await c.post(f"{URLS['pos']}/open_position", json={
                         "symbol": sym,
                         "side": action,
                         "leverage": d.get('leverage', 5),
-                        "size_pct": d.get('size_pct', 0.15),
-                        "score": d.get('score')
+                        "size_pct": d.get('size_pct', 0.15)
                     })
                     print(f"        ✅ Result: {res.json()}")
-                    remaining_slots -= 1
 
         except Exception as e: 
             print(f"        ❌ AI/Exec Error: {e}")
