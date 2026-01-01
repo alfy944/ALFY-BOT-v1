@@ -158,30 +158,12 @@ class CryptoTechnicalAnalysisBybit:
         else:
             mode = regime
 
-        score_trend = 0.0
-        score_trend += 0.4 if trend_1m == trend_5m else 0.0
-        score_trend += 0.3 if abs(ema_dist_1m) > 0.0005 else 0.0
-        score_trend += 0.2 if atr_pct_1m >= 0.0010 else 0.0
-        score_trend += 0.1 if macd_hist_1m > -0.00015 else 0.0
-
-        score_reversal = 0.0
-        score_reversal += 0.4 if abs(ema_dist_1m) >= 0.0012 else 0.0
-        score_reversal += 0.3 if macd_hist_1m > macd_hist_3m else 0.0
-        score_reversal += 0.2 if atr_pct_1m >= 0.0011 else 0.0
-        score_reversal += 0.1 if regime == "RANGE" else 0.0
-
-        score_extreme = 0.0
-        score_extreme += 0.5 if abs(ema_dist_1m) >= 0.0020 else 0.0
-        score_extreme += 0.3 if macd_hist_1m > macd_hist_3m else 0.0
-        score_extreme += 0.2 if atr_pct_1m >= 0.0012 else 0.0
-
         trend_scalp_long = (
             mode == "TREND_LONG"
             and trend_1m == "BULLISH"
             and ema_dist_1m > 0
             and atr_pct_1m >= 0.0009
             and macd_hist_1m > -0.00015
-            and score_trend >= 0.6
         )
         trend_scalp_short = (
             mode == "TREND_SHORT"
@@ -189,7 +171,6 @@ class CryptoTechnicalAnalysisBybit:
             and ema_dist_1m < 0
             and atr_pct_1m >= 0.0009
             and macd_hist_1m < 0.00015
-            and score_trend >= 0.6
         )
 
         reversal_long = (
@@ -197,28 +178,24 @@ class CryptoTechnicalAnalysisBybit:
             and macd_hist_1m > macd_hist_3m
             and ema_dist_1m < -0.0012
             and atr_pct_1m >= 0.0011
-            and score_reversal >= 0.5
         )
         reversal_short = (
             mode == "RANGE"
             and macd_hist_1m < macd_hist_3m
             and ema_dist_1m > 0.0012
             and atr_pct_1m >= 0.0011
-            and score_reversal >= 0.5
         )
         extreme_reversal_long = (
             mode == "EXTREME"
             and ema_dist_1m < -0.0020
             and atr_pct_1m >= 0.0012
             and macd_hist_1m > macd_hist_3m
-            and score_extreme >= 0.45
         )
         extreme_reversal_short = (
             mode == "EXTREME"
             and ema_dist_1m > 0.0020
             and atr_pct_1m >= 0.0012
             and macd_hist_1m < macd_hist_3m
-            and score_extreme >= 0.45
         )
 
         atr_1m = float(last_1m["atr_14"])
@@ -300,8 +277,7 @@ class CryptoTechnicalAnalysisBybit:
                     "short": bool(trend_scalp_short),
                     "ema_dist_1m": float(round(ema_dist_1m, 6)),
                     "atr_pct_1m": float(round(atr_pct_1m, 6)),
-                    "macd_hist_1m": float(round(macd_hist_1m, 6)),
-                    "score": float(round(score_trend, 2))
+                    "macd_hist_1m": float(round(macd_hist_1m, 6))
                 },
                 "reversal_scalp": {
                     "long": bool(reversal_long),
@@ -309,8 +285,7 @@ class CryptoTechnicalAnalysisBybit:
                     "ema_dist_1m": float(round(ema_dist_1m, 6)),
                     "atr_pct_1m": float(round(atr_pct_1m, 6)),
                     "macd_hist_1m": float(round(macd_hist_1m, 6)),
-                    "macd_hist_3m": float(round(macd_hist_3m, 6)),
-                    "score": float(round(score_reversal, 2))
+                    "macd_hist_3m": float(round(macd_hist_3m, 6))
                 },
                 "extreme_reversal_scalp": {
                     "long": bool(extreme_reversal_long),
@@ -318,8 +293,7 @@ class CryptoTechnicalAnalysisBybit:
                     "ema_dist_1m": float(round(ema_dist_1m, 6)),
                     "atr_pct_1m": float(round(atr_pct_1m, 6)),
                     "macd_hist_1m": float(round(macd_hist_1m, 6)),
-                    "macd_hist_3m": float(round(macd_hist_3m, 6)),
-                    "score": float(round(score_extreme, 2))
+                    "macd_hist_3m": float(round(macd_hist_3m, 6))
                 },
                 "risk_management": {
                     "trend": {
