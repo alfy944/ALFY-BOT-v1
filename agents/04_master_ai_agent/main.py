@@ -28,16 +28,11 @@ AGENT_URLS = {
 
 # Default parameters (fallback)
 DEFAULT_PARAMS = {
-    "rsi_overbought": 70,
-    "rsi_oversold": 30,
     "default_leverage": 5,
     "size_pct": 0.15,
     "reverse_threshold": 2.0,
     "atr_multiplier_sl": 2.0,
     "atr_multiplier_tp": 3.0,
-    "min_rsi_for_long": 40,
-    "max_rsi_for_short": 60,
-    "min_score_trade": 0.6,
     "atr_sl_factor": 1.2,
     "trailing_atr_factor": 1.0,
     "breakeven_R": 1.0,
@@ -259,7 +254,7 @@ FORMATO RISPOSTA JSON OBBLIGATORIO:
       "action": "OPEN_LONG" | "OPEN_SHORT" | "HOLD" | "CLOSE",
       "leverage": 5.0,
       "size_pct": 0.15,
-      "rationale": "RSI basso su supporto"
+      "rationale": "trend chiaro con momentum favorevole"
     }
   ]
 }
@@ -285,7 +280,6 @@ def decide_batch(payload: AnalysisPayload):
             t = v.get('tech', {})
             assets_summary[k] = {
                 "price": t.get('price'),
-                "rsi_7": t.get('details', {}).get('rsi_7') or t.get('rsi_7'),
                 "trend": t.get('trend'),
                 "macd_hist": t.get('macd_hist'),
                 "macd": t.get('macd')
@@ -301,14 +295,9 @@ def decide_batch(payload: AnalysisPayload):
         enhanced_system_prompt = SYSTEM_PROMPT + f"""
 
 PARAMETRI OTTIMIZZATI (dall'evoluzione automatica):
-- RSI Overbought (per short): {params.get('rsi_overbought', 70)}
-- RSI Oversold (per long): {params.get('rsi_oversold', 30)}
 - Leverage suggerito: {params.get('default_leverage', 5)}x
 - Size per trade: {params.get('size_pct', 0.15)*100:.0f}% del wallet
 - Soglia reverse: {params.get('reverse_threshold', 2.0)}%
-- Min RSI per long: {params.get('min_rsi_for_long', 40)}
-- Max RSI per short: {params.get('max_rsi_for_short', 60)}
-- Min score per aprire trade: {params.get('min_score_trade', 0.6)}
 - ATR SL factor: {params.get('atr_sl_factor', 1.2)} | trailing ATR: {params.get('trailing_atr_factor', 1.0)} | breakeven R: {params.get('breakeven_R', 1.0)}
 - Reverse abilitato: {params.get('reverse_enabled', True)} | Max daily trades: {params.get('max_daily_trades', 3)}
 
