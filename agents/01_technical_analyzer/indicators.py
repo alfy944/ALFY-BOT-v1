@@ -208,14 +208,14 @@ class CryptoTechnicalAnalysisBybit:
         )
         extreme_reversal_long = (
             mode == "EXTREME"
-            ema_dist_1m < -0.0020
+            and ema_dist_1m < -0.0020
             and atr_pct_1m >= 0.0012
             and macd_hist_1m > macd_hist_3m
             and score_extreme >= 0.45
         )
         extreme_reversal_short = (
             mode == "EXTREME"
-            ema_dist_1m > 0.0020
+            and ema_dist_1m > 0.0020
             and atr_pct_1m >= 0.0012
             and macd_hist_1m < macd_hist_3m
             and score_extreme >= 0.45
