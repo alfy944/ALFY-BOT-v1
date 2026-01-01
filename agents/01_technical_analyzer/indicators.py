@@ -142,6 +142,7 @@ class CryptoTechnicalAnalysisBybit:
         ema50_1m = last_1m["ema_50"]
         macd_hist_1m = last_1m["macd_hist"]
         macd_hist_3m = last_3m["macd_hist"]
+        rsi_1m = last_1m["rsi_14"]
 
         trend_long = trend_5m == "BULLISH"
         trend_short = trend_5m == "BEARISH"
@@ -179,6 +180,11 @@ class CryptoTechnicalAnalysisBybit:
             and ema_dist_1m > 0.0012
             and atr_pct_1m >= 0.0011
         )
+        extreme_reversal_long = (
+            rsi_1m <= 15
+            and atr_pct_1m >= 0.0010
+            and macd_hist_1m > macd_hist_3m
+        )
 
         atr_1m = float(last_1m["atr_14"])
         trend_sl = atr_1m * 1.0
@@ -186,6 +192,8 @@ class CryptoTechnicalAnalysisBybit:
         trend_tp2 = atr_1m * 1.8
         reversal_sl = atr_1m * 1.4
         reversal_tp = atr_1m * 1.0
+        extreme_reversal_sl = atr_1m * 0.8
+        extreme_reversal_tp = atr_1m * 0.8
 
         return {
             "symbol": ticker,
@@ -228,7 +236,7 @@ class CryptoTechnicalAnalysisBybit:
                         "ema_50": float(round(last_1m["ema_50"], 2)),
                         "ema_dist": float(round(ema_dist_1m, 6)),
                         "vwap": float(round(vwap_1m, 2)),
-                        "rsi_14": float(round(last_1m["rsi_14"], 2)),
+                        "rsi_14": float(round(rsi_1m, 2)),
                         "atr_14": float(round(last_1m["atr_14"], 6)),
                         "atr_pct": float(round(atr_pct_1m, 4)),
                         "macd_hist": float(round(last_1m["macd_hist"], 6)),
@@ -267,6 +275,13 @@ class CryptoTechnicalAnalysisBybit:
                     "macd_hist_1m": float(round(macd_hist_1m, 6)),
                     "macd_hist_3m": float(round(macd_hist_3m, 6))
                 },
+                "extreme_reversal_scalp": {
+                    "long": bool(extreme_reversal_long),
+                    "rsi_1m": float(round(rsi_1m, 2)),
+                    "atr_pct_1m": float(round(atr_pct_1m, 6)),
+                    "macd_hist_1m": float(round(macd_hist_1m, 6)),
+                    "macd_hist_3m": float(round(macd_hist_3m, 6))
+                },
                 "risk_management": {
                     "trend": {
                         "sl_atr": float(round(trend_sl, 6)),
@@ -278,6 +293,13 @@ class CryptoTechnicalAnalysisBybit:
                         "sl_atr": float(round(reversal_sl, 6)),
                         "tp_atr": float(round(reversal_tp, 6)),
                         "tp_target": "0.8r_to_1.0r"
+                    },
+                    "extreme_reversal": {
+                        "sl_atr": float(round(extreme_reversal_sl, 6)),
+                        "tp_atr": float(round(extreme_reversal_tp, 6)),
+                        "tp_max_r": 1.0,
+                        "time_stop_bars": 6,
+                        "exit_r_threshold": 0.25
                     },
                     "break_even_r": 0.7,
                     "time_stop_bars": 8,
