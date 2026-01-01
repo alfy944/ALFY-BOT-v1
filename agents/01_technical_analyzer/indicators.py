@@ -87,7 +87,6 @@ class CryptoTechnicalAnalysisBybit:
         df_1m["ema_9"] = self.calculate_ema(df_1m["close"], 9)
         df_1m["ema_21"] = self.calculate_ema(df_1m["close"], 21)
         df_1m["ema_50"] = self.calculate_ema(df_1m["close"], 50)
-        df_1m["rsi_14"] = self.calculate_rsi(df_1m["close"], 14)
         df_1m["atr_14"] = self.calculate_atr(df_1m["high"], df_1m["low"], df_1m["close"], 14)
         df_1m["vwap"] = self.calculate_vwap(df_1m)
         macd_1m, macd_1m_sig, macd_1m_diff = self.calculate_macd(df_1m["close"])
@@ -122,80 +121,72 @@ class CryptoTechnicalAnalysisBybit:
         macd_trend = "POSITIVE" if last["macd_line"] > last["macd_signal"] else "NEGATIVE"
 
         # Momentum exit conditions (per-bar, candle close driven)
-        rsi_below_50 = last["rsi_14"] < 50
-        rsi_above_50 = last["rsi_14"] > 50
         macd_hist_falling = (last["macd_hist"] < prev["macd_hist"]) and (prev["macd_hist"] < prev2["macd_hist"])
         macd_hist_rising = (last["macd_hist"] > prev["macd_hist"]) and (prev["macd_hist"] > prev2["macd_hist"])
         close_below_ema20 = last["close"] < last["ema_20"]
         close_above_ema20 = last["close"] > last["ema_20"]
 
-        long_exit_votes = int(sum([rsi_below_50, macd_hist_falling, close_below_ema20]))
-        short_exit_votes = int(sum([rsi_above_50, macd_hist_rising, close_above_ema20]))
+        long_exit_votes = int(sum([macd_hist_falling, close_below_ema20]))
+        short_exit_votes = int(sum([macd_hist_rising, close_above_ema20]))
 
         ema_spread = (last_5m["ema_9"] - last_5m["ema_21"]) / last_5m["ema_21"]
         ema_dist_1m = (last_1m["ema_9"] - last_1m["ema_21"]) / last_1m["ema_21"]
         ema_dist_5m = ema_spread
         atr_pct_1m = last_1m["atr_14"] / last_1m["close"]
-        trend_1m = "BULLISH" if last_1m["ema_9"] > last_1m["ema_21"] else "BEARISH"
         trend_5m = "BULLISH" if last_5m["ema_9"] > last_5m["ema_21"] else "BEARISH"
         vwap_1m = last_1m["vwap"]
         ema50_1m = last_1m["ema_50"]
         macd_hist_1m = last_1m["macd_hist"]
         macd_hist_3m = last_3m["macd_hist"]
-        rsi_1m = last_1m["rsi_14"]
 
-        trend_long = trend_5m == "BULLISH"
-        trend_short = trend_5m == "BEARISH"
-        if trend_long and abs(ema_dist_5m) >= 0.0008:
-            regime = "TREND_LONG"
-        elif trend_short and abs(ema_dist_5m) >= 0.0008:
-            regime = "TREND_SHORT"
-        else:
-            regime = "RANGE"
+        trend_long = trend_5m == "BULLISH" and ema_dist_5m >= 0.0008
+        trend_short = trend_5m == "BEARISH" and ema_dist_5m <= -0.0008
 
         if abs(ema_dist_1m) >= 0.0020:
             mode = "EXTREME"
+        elif trend_long:
+            mode = "TREND_LONG"
+        elif trend_short:
+            mode = "TREND_SHORT"
         else:
-            mode = regime
+            mode = "REVERSAL"
 
         trend_scalp_long = (
             mode == "TREND_LONG"
-            and trend_1m == "BULLISH"
             and ema_dist_1m > 0
             and atr_pct_1m >= 0.0009
-            and macd_hist_1m > -0.00015
+            and macd_hist_1m > 0
         )
         trend_scalp_short = (
             mode == "TREND_SHORT"
-            and trend_1m == "BEARISH"
             and ema_dist_1m < 0
             and atr_pct_1m >= 0.0009
-            and macd_hist_1m < 0.00015
+            and macd_hist_1m < 0
         )
 
         reversal_long = (
-            mode == "RANGE"
-            and macd_hist_1m > macd_hist_3m
+            mode == "REVERSAL"
             and ema_dist_1m < -0.0012
             and atr_pct_1m >= 0.0011
+            and macd_hist_1m > 0
         )
         reversal_short = (
-            mode == "RANGE"
-            and macd_hist_1m < macd_hist_3m
+            mode == "REVERSAL"
             and ema_dist_1m > 0.0012
             and atr_pct_1m >= 0.0011
+            and macd_hist_1m < 0
         )
         extreme_reversal_long = (
             mode == "EXTREME"
             and ema_dist_1m < -0.0020
             and atr_pct_1m >= 0.0012
-            and macd_hist_1m > macd_hist_3m
+            and macd_hist_1m > 0
         )
         extreme_reversal_short = (
             mode == "EXTREME"
             and ema_dist_1m > 0.0020
             and atr_pct_1m >= 0.0012
-            and macd_hist_1m < macd_hist_3m
+            and macd_hist_1m < 0
         )
 
         atr_1m = float(last_1m["atr_14"])
@@ -219,16 +210,14 @@ class CryptoTechnicalAnalysisBybit:
             "resistance": float(round(last["close"] + (2 * last["atr_14"]), 2)),
             "momentum_exit": {
                 "long": bool(long_exit_votes >= 2),
-                "short": bool(short_exit_votes >= 2),
-                "votes": {
-                    "long": long_exit_votes,
-                    "short": short_exit_votes,
-                    "rsi_below_50": bool(rsi_below_50),
-                    "rsi_above_50": bool(rsi_above_50),
-                    "macd_hist_falling": bool(macd_hist_falling),
-                    "macd_hist_rising": bool(macd_hist_rising),
-                    "close_below_ema20": bool(close_below_ema20),
-                    "close_above_ema20": bool(close_above_ema20),
+                    "short": bool(short_exit_votes >= 2),
+                    "votes": {
+                        "long": long_exit_votes,
+                        "short": short_exit_votes,
+                        "macd_hist_falling": bool(macd_hist_falling),
+                        "macd_hist_rising": bool(macd_hist_rising),
+                        "close_below_ema20": bool(close_below_ema20),
+                        "close_above_ema20": bool(close_above_ema20),
                 },
             },
             "details": {
@@ -242,13 +231,12 @@ class CryptoTechnicalAnalysisBybit:
                 "decision_timeframe": "1m",
                 "timeframes": {
                     "1m": {
-                        "trend": trend_1m,
+                        "trend": "BULLISH" if last_1m["ema_9"] > last_1m["ema_21"] else "BEARISH",
                         "ema_9": float(round(last_1m["ema_9"], 2)),
                         "ema_21": float(round(last_1m["ema_21"], 2)),
                         "ema_50": float(round(last_1m["ema_50"], 2)),
                         "ema_dist": float(round(ema_dist_1m, 6)),
                         "vwap": float(round(vwap_1m, 2)),
-                        "rsi_14": float(round(rsi_1m, 2)),
                         "atr_14": float(round(last_1m["atr_14"], 6)),
                         "atr_pct": float(round(atr_pct_1m, 4)),
                         "macd_hist": float(round(last_1m["macd_hist"], 6)),
@@ -268,9 +256,10 @@ class CryptoTechnicalAnalysisBybit:
                 },
                 "regime": {
                     "mode": mode,
-                    "trend_long": bool(trend_long),
-                    "trend_short": bool(trend_short),
-                    "range": bool(regime == "RANGE")
+                    "trend_long": bool(mode == "TREND_LONG"),
+                    "trend_short": bool(mode == "TREND_SHORT"),
+                    "reversal": bool(mode == "REVERSAL"),
+                    "extreme": bool(mode == "EXTREME")
                 },
                 "trend_scalp": {
                     "long": bool(trend_scalp_long),
