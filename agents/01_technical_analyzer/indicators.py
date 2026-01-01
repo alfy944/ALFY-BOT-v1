@@ -12,6 +12,17 @@ DEFAULT_RANGE_CONFIG = {
     "adx_soft_threshold": 20,
     "adx_hard_threshold": 25,
     "ema_slope_threshold": 0.02,
+    "ema_dist_threshold": 0.01,
+    "atr_pct_threshold": 0.01,
+    "min_checks": 2,
+    "breakout_atr_pct_threshold": 0.02,
+    "breakout_guard_lookback": 6,
+    "rsi_setup_long": 30,
+    "rsi_setup_short": 70,
+    "setup_ttl_bars": 6,
+    "rsi_trigger_long": 35,
+    "rsi_trigger_short": 65,
+    "adx_threshold": 25,
 }
 
 class CryptoTechnicalAnalysisBybit:
@@ -151,7 +162,9 @@ class CryptoTechnicalAnalysisBybit:
             last_15m = df_15m.iloc[-1]
             trend_15m = "BULLISH" if last_15m["close"] > last_15m["ema_50"] else "BEARISH"
 
+        ema50_1h = None
         ema50_1h_slope = None
+        ema50_1h_dist = None
         try:
             df_1h = self.fetch_ohlcv(ticker, "1h", limit=200)
             if not df_1h.empty and len(df_1h) >= 20:
@@ -163,11 +176,15 @@ class CryptoTechnicalAnalysisBybit:
                 if len(df_1h) >= 2:
                     ema_last = df_1h["ema_50"].iloc[-1]
                     ema_prev = df_1h["ema_50"].iloc[-2]
+                    if pd.notna(ema_last):
+                        ema50_1h = float(ema_last)
                     if pd.notna(ema_last) and pd.notna(ema_prev):
                         ema50_1h_slope = float(ema_last - ema_prev)
         except Exception:
             adx_1h = None
+            ema50_1h = None
             ema50_1h_slope = None
+            ema50_1h_dist = None
 
         df["ema_20"] = self.calculate_ema(df["close"], 20)
         df["ema_50"] = self.calculate_ema(df["close"], 50)
@@ -190,6 +207,8 @@ class CryptoTechnicalAnalysisBybit:
             return {}
 
         last = df.iloc[-1]
+        if ema50_1h is not None and last["close"]:
+            ema50_1h_dist = abs(float(last["close"]) - ema50_1h) / float(last["close"])
         prev = df.iloc[-2]
         prev2 = df.iloc[-3]
         pp = self.calculate_pivot_points(last["high"], last["low"], last["close"])
