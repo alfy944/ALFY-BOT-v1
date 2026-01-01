@@ -33,6 +33,7 @@ HISTORY_FILE = os.getenv("HISTORY_FILE", "equity_history.json")
 API_KEY = os.getenv("BYBIT_API_KEY")
 API_SECRET = os.getenv("BYBIT_API_SECRET")
 IS_TESTNET = os.getenv("BYBIT_TESTNET", "false").lower() == "true"
+STRATEGY_MODE = os.getenv("STRATEGY_MODE", "mean_reversion").lower()
 
 # Se usi Hedge Mode su Bybit (posizioni long/short contemporanee),
 # metti BYBIT_HEDGE_MODE=true. Se non sei sicuro, lascialo false.
@@ -97,6 +98,8 @@ reverse_cooldown_tracker: Dict[str, float] = {}
 # --- COOLDOWN CONFIGURATION ---
 COOLDOWN_MINUTES = int(os.getenv("COOLDOWN_MINUTES", "0"))
 COOLDOWN_FILE = os.getenv("COOLDOWN_FILE", "/data/closed_cooldown.json")
+DAILY_KILL_SWITCH_PCT = float(os.getenv("DAILY_KILL_SWITCH_PCT", "-0.02"))
+MAX_TRADES_PER_SYMBOL_PER_DAY = int(os.getenv("MAX_TRADES_PER_SYMBOL_PER_DAY", "6"))
 
 # --- AI DECISIONS FILE ---
 AI_DECISIONS_FILE = os.getenv("AI_DECISIONS_FILE", "/data/ai_decisions.json")
@@ -108,6 +111,7 @@ DEFAULT_SIZE_PCT = float(os.getenv("DEFAULT_SIZE_PCT", "0.15"))
 
 file_lock = Lock()
 position_risk_meta: Dict[str, dict] = {}
+last_entry_candle_ts: Dict[str, int] = {}
 
 # =========================================================
 # HELPERS
@@ -169,6 +173,15 @@ def ccxt_symbol_from_id(exchange_obj, sym_id: str) -> Optional[str]:
     except Exception:
         pass
     return None
+
+def has_open_order(sym_ccxt: str) -> bool:
+    if not exchange:
+        return False
+    try:
+        orders = exchange.fetch_open_orders(sym_ccxt)
+        return any(o.get("status") in (None, "", "open") for o in orders)
+    except Exception:
+        return False
 
 def normalize_position_side(side_raw: str) -> Optional[str]:
     """
@@ -500,6 +513,7 @@ def get_market_risk_data(symbol: str) -> Dict[str, Any]:
                     "volatility": d.get("volatility"),
                     "macd_hist": to_float(d.get("macd_hist"), None),
                     "rsi": to_float(d.get("rsi"), None),
+                    "rsi_14": to_float((d.get("details", {}) or {}).get("rsi_14"), None),
                     "ema_20": to_float((d.get("details", {}) or {}).get("ema_20"), None),
                     "ema_50": to_float((d.get("details", {}) or {}).get("ema_50"), None),
                     "structure_break": d.get("structure_break") or {},
@@ -512,6 +526,10 @@ def get_market_risk_data(symbol: str) -> Dict[str, Any]:
                     "swing_low": to_float((d.get("structure_break") or {}).get("swing_low"), None),
                     "support": to_float(d.get("support"), None),
                     "resistance": to_float(d.get("resistance"), None),
+                    "bb_mid": to_float((d.get("details", {}) or {}).get("bb_mid"), None),
+                    "bb_upper": to_float((d.get("details", {}) or {}).get("bb_upper"), None),
+                    "bb_lower": to_float((d.get("details", {}) or {}).get("bb_lower"), None),
+                    "mean_reversion": d.get("mean_reversion") or {},
                 }
     except Exception:
         pass
@@ -594,6 +612,10 @@ def check_and_update_trailing_stops():
             swing_high = to_float(risk_data.get("swing_high"), None)
             support_level = to_float(risk_data.get("support"), None)
             resistance_level = to_float(risk_data.get("resistance"), None)
+            mean_rev = risk_data.get("mean_reversion") or {}
+            bb_mid = risk_data.get("bb_mid") or mean_rev.get("bb_mid")
+            range_active = mean_rev.get("range_active")
+            breakout_guard = mean_rev.get("breakout_guard")
 
             # Track initial SL distance per symbol for 1R calculations
             meta = position_risk_meta.get(sym_id, {})
@@ -602,7 +624,7 @@ def check_and_update_trailing_stops():
                 base_sl = sl_current
                 if base_sl == 0.0:
                     if atr:
-                        base_sl = entry_price - (atr * 1.2) if side_dir == "long" else entry_price + (atr * 1.2)
+                        base_sl = entry_price - (atr * SL_ATR_MULTIPLIER) if side_dir == "long" else entry_price + (atr * SL_ATR_MULTIPLIER)
                     else:
                         base_sl = entry_price * (1 - DEFAULT_INITIAL_SL_PCT) if side_dir == "long" else entry_price * (1 + DEFAULT_INITIAL_SL_PCT)
                 position_risk_meta[sym_id] = {
@@ -618,6 +640,52 @@ def check_and_update_trailing_stops():
             risk_distance = 0.0
             if initial_sl_price and entry_price:
                 risk_distance = (entry_price - initial_sl_price) if side_dir == "long" else (initial_sl_price - entry_price)
+
+            if STRATEGY_MODE == "mean_reversion":
+                opened_at = position_risk_meta.get(sym_id, {}).get("opened_at")
+                if range_active is False:
+                    record_order_intent({
+                        "event": "regime_exit",
+                        "symbol": symbol,
+                        "side": side_dir,
+                        "reason": "range_filter_off",
+                    })
+                    execute_close_position(symbol)
+                    continue
+                if breakout_guard:
+                    record_order_intent({
+                        "event": "regime_exit",
+                        "symbol": symbol,
+                        "side": side_dir,
+                        "reason": "breakout_guard_active",
+                    })
+                    execute_close_position(symbol)
+                    continue
+
+                if bb_mid:
+                    if (side_dir == "long" and mark_price >= bb_mid) or (side_dir == "short" and mark_price <= bb_mid):
+                        record_order_intent({
+                            "event": "tp_mid_exit",
+                            "symbol": symbol,
+                            "side": side_dir,
+                            "reason": "bb_mid_reached",
+                        })
+                        execute_close_position(symbol)
+                        continue
+
+                if opened_at:
+                    elapsed_bars = (time.time() - opened_at) / (ENTRY_INTERVAL_MIN * 60)
+                    if elapsed_bars >= TIME_EXIT_BARS:
+                        record_order_intent({
+                            "event": "time_exit",
+                            "symbol": symbol,
+                            "side": side_dir,
+                            "reason": "mean_reversion_timeout",
+                        })
+                        execute_close_position(symbol)
+                        continue
+
+                continue
 
             new_sl_price = None
             profit_distance = (mark_price - entry_price) if side_dir == "long" else (entry_price - mark_price)
@@ -1466,6 +1534,18 @@ def open_position(order: OrderRequest):
         except Exception as e:
             print(f"⚠️ Errore check posizioni esistenti: {e}")
 
+        if has_open_order(sym_ccxt):
+            record_order_intent({
+                "event": "entry_blocked",
+                "symbol": sym_ccxt,
+                "side": requested_side,
+                "reason": "open_order_pending",
+            })
+            return {
+                "status": "blocked",
+                "msg": "Ordine pendente già presente",
+            }
+
         # Cooldown check
         try:
             ensure_parent_dir(COOLDOWN_FILE)
@@ -1499,6 +1579,32 @@ def open_position(order: OrderRequest):
                 }
         except Exception as e:
             print(f"⚠️ Errore check cooldown: {e}")
+
+        if daily_loss_breached():
+            record_order_intent({
+                "event": "entry_blocked",
+                "symbol": sym_ccxt,
+                "side": requested_side,
+                "reason": "daily_kill_switch",
+            })
+            return {
+                "status": "blocked",
+                "msg": "Daily kill switch attivo",
+            }
+
+        trades_today = trades_today_for_symbol(sym_id)
+        if MAX_TRADES_PER_SYMBOL_PER_DAY > 0 and trades_today >= MAX_TRADES_PER_SYMBOL_PER_DAY:
+            record_order_intent({
+                "event": "entry_blocked",
+                "symbol": sym_ccxt,
+                "side": requested_side,
+                "reason": "max_trades_per_symbol",
+                "count": trades_today,
+            })
+            return {
+                "status": "blocked",
+                "msg": f"Max trade per simbolo raggiunti ({trades_today})",
+            }
 
         # set leverage
         try:
@@ -1611,7 +1717,7 @@ def open_position(order: OrderRequest):
         except Exception:
             pass
         position_risk_meta[sym_id] = {
-            "entry_price": price,
+            "entry_price": avg_fill_price if avg_fill_price > 0 else price,
             "initial_sl": sl_price,
             "breakeven_reached": False,
             "size_pct": float(order.size_pct),
@@ -1620,6 +1726,7 @@ def open_position(order: OrderRequest):
             "market_conditions": {**(risk_data or {}), "initial_risk_pct": round(initial_risk_pct, 4)},
             "initial_atr_pct": initial_atr_pct,
             "opened_at": time.time(),
+            "tp_price": tp_price,
         }
         return {"status": "executed", "id": res.get("id")}
 

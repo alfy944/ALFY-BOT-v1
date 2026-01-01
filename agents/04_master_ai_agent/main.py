@@ -16,6 +16,7 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
+STRATEGY_MODE = os.getenv("STRATEGY_MODE", "mean_reversion").lower()
 
 # Agent URLs for reverse analysis
 AGENT_URLS = {
@@ -285,6 +286,27 @@ def dynamic_size_pct(score: Optional[float], params: Dict[str, Any], atr_pct: Op
     return clamp(size, 0.05, 0.25)
 
 
+def risk_based_size_pct(
+    price: Optional[float],
+    atr: Optional[float],
+    leverage: float,
+    risk_pct: float,
+    sl_atr_mult: float,
+    hard_stop_pct: Optional[float] = None,
+    size_floor: float = 0.05,
+    size_cap: float = 0.25,
+) -> float:
+    if not price or not atr or atr <= 0 or leverage <= 0:
+        return clamp(risk_pct * 10, size_floor, size_cap)
+    risk_distance = atr * sl_atr_mult
+    if hard_stop_pct and hard_stop_pct > 0:
+        risk_distance = min(risk_distance, price * hard_stop_pct)
+    if risk_distance <= 0:
+        return clamp(risk_pct * 10, size_floor, size_cap)
+    size_pct = (risk_pct * price) / (leverage * risk_distance)
+    return clamp(size_pct, size_floor, size_cap)
+
+
 def infer_open_action_from_text(text: str) -> Optional[str]:
     """Infer OPEN_LONG/OPEN_SHORT intent from a natural-language rationale.
 
@@ -427,6 +449,136 @@ FORMATO RISPOSTA JSON OBBLIGATORIO:
 }
 """
 
+def build_mean_reversion_decisions(
+    assets_summary: Dict[str, Dict[str, Any]],
+    active_positions: list,
+    params: Dict[str, Any],
+) -> Dict[str, Any]:
+    decisions = []
+    active_set = {str(s).upper() for s in active_positions}
+
+    for symbol, tech in assets_summary.items():
+        if symbol in active_set:
+            decisions.append({
+                "symbol": symbol,
+                "action": "HOLD",
+                "leverage": params.get("default_leverage", 3),
+                "size_pct": 0.0,
+                "score": 0.0,
+                "rationale": "already_in_position",
+            })
+            continue
+
+        mean_rev = tech.get("mean_reversion") or {}
+        range_active = bool(mean_rev.get("range_active"))
+        long_signal = bool(mean_rev.get("long_signal"))
+        short_signal = bool(mean_rev.get("short_signal"))
+        breakout_guard = bool(mean_rev.get("breakout_guard"))
+        rsi_val = tech.get("rsi")
+        bb_mid = mean_rev.get("bb_mid")
+        setup_long = bool(mean_rev.get("setup_long"))
+        setup_short = bool(mean_rev.get("setup_short"))
+        trigger_long = bool(mean_rev.get("long_signal"))
+        trigger_short = bool(mean_rev.get("short_signal"))
+        adx_soft_ok = bool(mean_rev.get("adx_soft_ok"))
+        volume_ratio = tech.get("volume_ratio")
+        volume_min = float(params.get("min_volume_ratio", 1.2))
+        volume_soft = float(params.get("mr_volume_soft_ratio", 1.2))
+        volume_hard = float(params.get("mr_volume_hard_ratio", 0.7))
+        volume_pass = volume_ratio is not None and volume_ratio >= volume_hard
+        volume_full = volume_ratio is not None and volume_ratio >= volume_soft
+        adx_1h = mean_rev.get("adx_1h")
+        ema_slope = mean_rev.get("ema50_1h_slope")
+        ema_dist = mean_rev.get("price_to_ema50_1h_pct")
+        atr_pct = mean_rev.get("atr_pct")
+        range_block_reason = mean_rev.get("range_block_reason")
+
+        action = "HOLD"
+        rationale = []
+        if not range_active:
+            rationale.append("range_filter_off")
+        elif breakout_guard:
+            rationale.append("breakout_guard_active")
+        elif long_signal:
+            action = "OPEN_LONG"
+            rationale.append("mean_reversion_long")
+        elif short_signal:
+            action = "OPEN_SHORT"
+            rationale.append("mean_reversion_short")
+        else:
+            rationale.append("no_signal")
+
+        leverage = params.get("default_leverage", 3)
+        price = tech.get("price")
+        atr = tech.get("atr")
+        risk_pct = float(params.get("risk_pct", 0.005))
+        sl_mult = float(params.get("atr_multiplier_sl", 1.0))
+        hard_stop_pct = float(params.get("max_hard_stop_pct", 0.0))
+        size_pct = risk_based_size_pct(price, atr, leverage, risk_pct, sl_mult, hard_stop_pct=hard_stop_pct)
+
+        trend_15m = (tech.get("trend_15m") or "").upper()
+        if action == "OPEN_LONG" and trend_15m == "BEARISH":
+            size_pct *= 0.7
+            rationale.append("trend_against_soft")
+        elif action == "OPEN_SHORT" and trend_15m == "BULLISH":
+            size_pct *= 0.7
+            rationale.append("trend_against_soft")
+        if action in ("OPEN_LONG", "OPEN_SHORT") and not adx_soft_ok:
+            size_pct *= 0.6
+            rationale.append("adx_soft_penalty")
+
+        if action in ("OPEN_LONG", "OPEN_SHORT") and volume_ratio is not None:
+            if volume_ratio < volume_hard:
+                action = "HOLD"
+                rationale.append("low_volume_block")
+            elif volume_ratio < volume_soft:
+                size_pct *= 0.7
+                rationale.append("low_volume_soft_mr")
+
+        score = 0.0
+        if action in ("OPEN_LONG", "OPEN_SHORT"):
+            score = 0.6
+            if rsi_val is not None:
+                score += min(abs(rsi_val - 50) / 50, 0.3)
+            if bb_mid:
+                score += 0.05
+            score = clamp(score, 0.4, 0.95)
+        decisions.append({
+            "symbol": symbol,
+            "action": action,
+            "leverage": leverage,
+            "size_pct": size_pct if action != "HOLD" else 0.0,
+            "score": score,
+            "rationale": "; ".join([
+                *rationale,
+                f"mr_flags range={range_active} guard={breakout_guard} setupL={setup_long} setupS={setup_short} trigL={trigger_long} trigS={trigger_short}",
+                f"volume_ratio={volume_ratio} soft={volume_soft} hard={volume_hard} pass={volume_pass} full={volume_full}",
+                f"range_diag adx_1h={adx_1h} soft_ok={adx_soft_ok} ema_slope={ema_slope} ema_dist={ema_dist} atr_pct={atr_pct} reasons={range_block_reason}",
+            ]),
+        })
+
+    return {
+        "analysis_summary": "Mean reversion mode: entries only when range filter is active with BB/RSI extremes.",
+        "decisions": decisions,
+    }
+
+
+def build_hold_decisions(assets_summary: Dict[str, Dict[str, Any]], reason: str) -> Dict[str, Any]:
+    decisions = []
+    for symbol in assets_summary.keys():
+        decisions.append({
+            "symbol": symbol,
+            "action": "HOLD",
+            "leverage": 1.0,
+            "size_pct": 0.0,
+            "score": 0.0,
+            "rationale": reason,
+        })
+    return {
+        "analysis_summary": reason,
+        "decisions": decisions,
+    }
+
 @app.post("/decide_batch")
 def decide_batch(payload: AnalysisPayload):
     try:
@@ -470,6 +622,8 @@ def decide_batch(payload: AnalysisPayload):
                 "last_low_5m": t.get("last_low_5m"),
                 "macd_hist_prev": t.get("macd_hist_prev"),
                 "macd_hist_prev2": t.get("macd_hist_prev2"),
+                "bb": t.get("bb") or {},
+                "mean_reversion": t.get("mean_reversion") or {},
             }
             
         prompt_data = {
@@ -477,9 +631,12 @@ def decide_batch(payload: AnalysisPayload):
             "active_positions": active_positions,
             "market_data": assets_summary
         }
-        
-        # Enhanced system prompt with evolved parameters
-        enhanced_system_prompt = SYSTEM_PROMPT + f"""
+
+        if STRATEGY_MODE == "mean_reversion":
+            decision_json = build_mean_reversion_decisions(assets_summary, active_positions, params)
+        else:
+            # Enhanced system prompt with evolved parameters
+            enhanced_system_prompt = SYSTEM_PROMPT + f"""
 
 PARAMETRI OTTIMIZZATI (dall'evoluzione automatica):
 - RSI Overbought (per short): {params.get('rsi_overbought', 70)}
@@ -504,27 +661,31 @@ Confidence del modello: {confidence}
 USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
 """
 
-        response = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
-            messages=[
-                {"role": "system", "content": enhanced_system_prompt},
-                {"role": "user", "content": f"ANALIZZA E AGISCI: {json.dumps(prompt_data)}"},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.7, # Più creatività = più trade
-        )
-        
-        # Logga i costi API per tracking DeepSeek
-        if hasattr(response, 'usage') and response.usage:
-            log_api_call(
-                tokens_in=response.usage.prompt_tokens,
-                tokens_out=response.usage.completion_tokens
-            )
+            try:
+                response = client.chat.completions.create(
+                    model=DEEPSEEK_MODEL,
+                    messages=[
+                        {"role": "system", "content": enhanced_system_prompt},
+                        {"role": "user", "content": f"ANALIZZA E AGISCI: {json.dumps(prompt_data)}"},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.7, # Più creatività = più trade
+                )
+                
+                # Logga i costi API per tracking DeepSeek
+                if hasattr(response, 'usage') and response.usage:
+                    log_api_call(
+                        tokens_in=response.usage.prompt_tokens,
+                        tokens_out=response.usage.completion_tokens
+                    )
 
-        content = response.choices[0].message.content
-        logger.info(f"AI Raw Response: {content}") # Debug nel log
-        
-        decision_json = json.loads(content)
+                content = response.choices[0].message.content
+                logger.info(f"AI Raw Response: {content}") # Debug nel log
+                
+                decision_json = json.loads(content)
+            except Exception as e:
+                logger.error(f"AI call failed, fallback to HOLD: {e}")
+                decision_json = build_hold_decisions(assets_summary, "llm_unavailable_hold")
 
         state = load_master_state()
         open_hour_count = count_recent_actions(state.get('decisions', []), 60, action_filter=["OPEN_LONG", "OPEN_SHORT"])
@@ -656,18 +817,19 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                     rationale_suffix = [r for r in rationale_suffix if r != 'macd_positive_strong']
 
             # Breakout requirement
-            breakout = tech.get("breakout") or {}
-            breakout_long = breakout.get("long")
-            breakout_short = breakout.get("short")
-            high_20 = tech.get("high_20")
-            low_20 = tech.get("low_20")
-            if is_open_action(d.get('action', '')):
-                if d.get('action') == "OPEN_LONG" and breakout_long is not None and not breakout_long:
-                    d['action'] = 'HOLD'
-                    rationale_suffix.append('no_breakout_long')
-                if d.get('action') == "OPEN_SHORT" and breakout_short is not None and not breakout_short:
-                    d['action'] = 'HOLD'
-                    rationale_suffix.append('no_breakout_short')
+            if STRATEGY_MODE == "trend_breakout":
+                breakout = tech.get("breakout") or {}
+                breakout_long = breakout.get("long")
+                breakout_short = breakout.get("short")
+                high_20 = tech.get("high_20")
+                low_20 = tech.get("low_20")
+                if is_open_action(d.get('action', '')):
+                    if d.get('action') == "OPEN_LONG" and breakout_long is not None and not breakout_long:
+                        d['action'] = 'HOLD'
+                        rationale_suffix.append('no_breakout_long')
+                    if d.get('action') == "OPEN_SHORT" and breakout_short is not None and not breakout_short:
+                        d['action'] = 'HOLD'
+                        rationale_suffix.append('no_breakout_short')
 
             # Transition regime gating
             regime_val = (tech.get("regime") or "").lower()
@@ -677,7 +839,8 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 if is_open_action(d.get('action', '')):
                     d['size_pct'] = d.get('size_pct', 0.1) * 0.85
             if (
-                is_open_action(d.get('action', ''))
+                STRATEGY_MODE != "mean_reversion"
+                and is_open_action(d.get('action', ''))
                 and regime_val == "transition"
             ):
                 allow_transition = False
@@ -775,7 +938,8 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             # Trend pullback short (allows neutral momentum)
             trend_pullback_short = False
             if (
-                is_open_action(d.get('action', ''))
+                STRATEGY_MODE != "mean_reversion"
+                and is_open_action(d.get('action', ''))
                 and d.get('action') == "OPEN_SHORT"
                 and regime_val == "trend_bear"
                 and trend_15m == "BEARISH"
@@ -795,7 +959,8 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             # Bear continuation short (RSI 25–45, tighter risk)
             bear_continuation_short = False
             if (
-                is_open_action(d.get('action', ''))
+                STRATEGY_MODE != "mean_reversion"
+                and is_open_action(d.get('action', ''))
                 and d.get('action') == "OPEN_SHORT"
                 and regime_val == "trend_bear"
                 and trend_15m == "BEARISH"
@@ -819,7 +984,8 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             # Counter-trend long in bear (small size)
             counter_trend_long = False
             if (
-                is_open_action(d.get('action', ''))
+                STRATEGY_MODE != "mean_reversion"
+                and is_open_action(d.get('action', ''))
                 and d.get('action') == "OPEN_LONG"
                 and regime_val == "trend_bear"
                 and (tech.get("rsi") or tech.get("rsi_7") or 0) < 35
@@ -861,7 +1027,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             d['score'] = score_val
 
             # Altcoin depends on BTC context
-            if is_open_action(d.get('action', '')) and symbol_key not in ("BTC", "BTCUSDT"):
+            if STRATEGY_MODE != "mean_reversion" and is_open_action(d.get('action', '')) and symbol_key not in ("BTC", "BTCUSDT"):
                 btc = assets_summary.get("BTCUSDT") or assets_summary.get("BTC") or {}
                 btc_trend = (btc.get("trend") or "").upper()
                 btc_rsi = float(btc.get("rsi") or 0)
@@ -993,7 +1159,12 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             if open_intents:
                 intended = open_intents[-1].get('text_intent') or initial_action
                 open_intents[-1]['hard_block'] = hard_block or not is_open_action(intended)
-                if initial_action in ("OPEN_LONG", "OPEN_SHORT") and d.get('action') == 'HOLD' and not hard_block:
+                if (
+                    initial_action in ("OPEN_LONG", "OPEN_SHORT")
+                    and d.get('action') == 'HOLD'
+                    and not hard_block
+                    and STRATEGY_MODE not in ("trend_breakout", "mean_reversion")
+                ):
                     d['action'] = initial_action
                     d['size_pct'] = dynamic_size_pct(score_val, params, atr_pct)
                     d['hold_quality'] = None
@@ -1068,7 +1239,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
         # Se l'LLM ha dichiarato un'azione di apertura ma dopo i filtri non ci sono OPEN,
         # prova a recuperare l'intento più forte (esclude blocchi hard come cooldown o limiti rischio)
         open_valid = [dec for dec in valid_decisions if is_open_action(dec.action)]
-        if not open_valid:
+        if not open_valid and STRATEGY_MODE != "mean_reversion":
             fallback_candidates = [
                 i for i in open_intents
                 if (
