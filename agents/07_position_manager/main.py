@@ -57,7 +57,8 @@ REVERSE_LEVERAGE = float(os.getenv("REVERSE_LEVERAGE", "5.0"))
 reverse_cooldown_tracker: Dict[str, float] = {}
 
 # --- COOLDOWN CONFIGURATION ---
-COOLDOWN_MINUTES = int(os.getenv("COOLDOWN_MINUTES", "5"))
+# Direzione specifica (long/short) dopo close: default 60 minuti
+COOLDOWN_MINUTES = int(os.getenv("COOLDOWN_MINUTES", "60"))
 COOLDOWN_FILE = os.getenv("COOLDOWN_FILE", "/data/closed_cooldown.json")
 
 # --- AI DECISIONS FILE ---
