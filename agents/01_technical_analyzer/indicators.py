@@ -156,12 +156,14 @@ class CryptoTechnicalAnalysisBybit:
         else:
             mode = "REVERSAL"
 
+        macd_hist_min = 0.0002
         trend_scalp_long = (
             mode == "TREND_LONG"
             and ema_dist_1m > 0
             and atr_pct_1m >= 0.0009
             and macd_hist_1m > 0
             and macd_hist_improving_long
+            and macd_hist_1m >= macd_hist_min
             and candle_long_ok
         )
         trend_scalp_short = (
@@ -170,6 +172,7 @@ class CryptoTechnicalAnalysisBybit:
             and atr_pct_1m >= 0.0009
             and macd_hist_1m < 0
             and macd_hist_improving_short
+            and abs(macd_hist_1m) >= macd_hist_min
             and candle_short_ok
         )
 
@@ -179,6 +182,7 @@ class CryptoTechnicalAnalysisBybit:
             and atr_pct_1m >= 0.0011
             and macd_hist_1m > 0
             and macd_hist_improving_long
+            and macd_hist_1m >= macd_hist_min
             and candle_long_ok
         )
         reversal_short = (
@@ -187,6 +191,7 @@ class CryptoTechnicalAnalysisBybit:
             and atr_pct_1m >= 0.0011
             and macd_hist_1m < 0
             and macd_hist_improving_short
+            and abs(macd_hist_1m) >= macd_hist_min
             and candle_short_ok
         )
         extreme_reversal_long = (
@@ -195,6 +200,7 @@ class CryptoTechnicalAnalysisBybit:
             and atr_pct_1m >= 0.0012
             and macd_hist_1m > 0
             and macd_hist_improving_long
+            and macd_hist_1m >= macd_hist_min
             and candle_long_ok
         )
         extreme_reversal_short = (
@@ -203,6 +209,7 @@ class CryptoTechnicalAnalysisBybit:
             and atr_pct_1m >= 0.0012
             and macd_hist_1m < 0
             and macd_hist_improving_short
+            and abs(macd_hist_1m) >= macd_hist_min
             and candle_short_ok
         )
 

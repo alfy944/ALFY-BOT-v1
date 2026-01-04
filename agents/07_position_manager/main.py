@@ -42,6 +42,11 @@ ATR_MULTIPLIERS = {
 TECHNICAL_ANALYZER_URL = os.getenv("TECHNICAL_ANALYZER_URL", "http://01_technical_analyzer:8000").strip()
 FALLBACK_TRAILING_PCT = float(os.getenv("FALLBACK_TRAILING_PCT", "0.025"))  # 2.5%
 DEFAULT_INITIAL_SL_PCT = float(os.getenv("DEFAULT_INITIAL_SL_PCT", "0.04"))  # 4%
+BREAK_EVEN_R = float(os.getenv("BREAK_EVEN_R", "0.7"))
+TIME_STOP_MINUTES = int(os.getenv("TIME_STOP_MINUTES", "8"))
+PARTIAL_TP_PCT = float(os.getenv("PARTIAL_TP_PCT", "0.5"))
+PARTIAL_TP_R = float(os.getenv("PARTIAL_TP_R", "1.0"))
+TRAILING_ATR_MULTIPLIER = float(os.getenv("TRAILING_ATR_MULTIPLIER", "1.2"))
 
 # --- PARAMETRI AI REVIEW / REVERSE ---
 ENABLE_AI_REVIEW = os.getenv("ENABLE_AI_REVIEW", "true").lower() == "true"
@@ -59,6 +64,7 @@ reverse_cooldown_tracker: Dict[str, float] = {}
 # --- COOLDOWN CONFIGURATION ---
 # Direzione specifica (long/short) dopo close: default 60 minuti
 COOLDOWN_MINUTES = int(os.getenv("COOLDOWN_MINUTES", "60"))
+COOLDOWN_PNL_THRESHOLD_PCT = float(os.getenv("COOLDOWN_PNL_THRESHOLD_PCT", "5.0"))
 COOLDOWN_FILE = os.getenv("COOLDOWN_FILE", "/data/closed_cooldown.json")
 
 # --- AI DECISIONS FILE ---
@@ -468,6 +474,8 @@ def check_and_update_trailing_stops():
                 position_risk_meta[sym_id] = {
                     "entry_price": entry_price,
                     "initial_sl": base_sl,
+                    "entry_ts": time.time(),
+                    "partial_tp_taken": False,
                 }
                 initial_sl_price = base_sl
 
@@ -478,11 +486,43 @@ def check_and_update_trailing_stops():
             if initial_sl_price and entry_price:
                 risk_distance = (entry_price - initial_sl_price) if side_dir == "long" else (initial_sl_price - entry_price)
 
+            # Time stop: close if trade stalls after N minutes
+            entry_ts = position_risk_meta.get(sym_id, {}).get("entry_ts", time.time())
+            elapsed_minutes = (time.time() - entry_ts) / 60.0
+            profit_distance = (mark_price - entry_price) if side_dir == "long" else (entry_price - mark_price)
+            if risk_distance > 0 and elapsed_minutes >= TIME_STOP_MINUTES:
+                if profit_distance < (risk_distance * 0.2):
+                    print(f"⏱️ Time-stop triggered for {symbol} ({side_dir}) after {elapsed_minutes:.1f}m")
+                    execute_close_position(symbol)
+                    continue
+
+            # Partial take profit at 1R
+            if risk_distance > 0 and not position_risk_meta.get(sym_id, {}).get("partial_tp_taken"):
+                if profit_distance >= (risk_distance * PARTIAL_TP_R):
+                    try:
+                        target_market = exchange.market(symbol)
+                        info = target_market.get("info", {}) or {}
+                        lot_filter = info.get("lotSizeFilter", {}) or {}
+                        qty_step = to_float(lot_filter.get("qtyStep") or (target_market.get("limits", {}).get("amount", {}) or {}).get("min"), 0.001)
+                        min_qty = to_float(lot_filter.get("minOrderQty") or qty_step, qty_step)
+                        partial_qty = max(qty * PARTIAL_TP_PCT, min_qty)
+                        partial_qty = float(exchange.amount_to_precision(symbol, partial_qty))
+                        if partial_qty >= min_qty:
+                            close_side = "sell" if side_dir == "long" else "buy"
+                            params = {"category": "linear", "reduceOnly": True}
+                            if use_position_idx():
+                                params["positionIdx"] = get_position_idx_from_position(p)
+                            params = strip_position_idx(params)
+                            exchange.create_order(symbol, "market", close_side, partial_qty, params=params)
+                            position_risk_meta[sym_id]["partial_tp_taken"] = True
+                            print(f"✅ Partial TP {symbol} {side_dir}: {partial_qty} @ {profit_distance:.6f}")
+                    except Exception as e:
+                        print(f"⚠️ Partial TP failed for {symbol}: {e}")
+
             # Break-even: lock stop to entry after 1R
             new_sl_price = None
             if risk_distance > 0:
-                profit_distance = (mark_price - entry_price) if side_dir == "long" else (entry_price - mark_price)
-                if profit_distance >= risk_distance:
+                if profit_distance >= (risk_distance * BREAK_EVEN_R):
                     target_be = entry_price
                     if side_dir == "long":
                         if sl_current == 0.0 or target_be > sl_current:
@@ -494,7 +534,7 @@ def check_and_update_trailing_stops():
 
             # Trailing ATR after break-even
             if (position_risk_meta.get(sym_id, {}).get("breakeven_reached") or sl_current == entry_price) and atr:
-                trailing_target = mark_price - (atr * 1.0) if side_dir == "long" else mark_price + (atr * 1.0)
+                trailing_target = mark_price - (atr * TRAILING_ATR_MULTIPLIER) if side_dir == "long" else mark_price + (atr * TRAILING_ATR_MULTIPLIER)
                 if side_dir == "long":
                     if sl_current == 0.0 or trailing_target > sl_current:
                         new_sl_price = max(new_sl_price or 0, trailing_target)
@@ -663,18 +703,21 @@ def execute_close_position(symbol: str) -> bool:
             market_conditions={},
         )
 
-        # Cooldown
+        # Cooldown (solo se PnL supera la soglia)
         try:
-            ensure_parent_dir(COOLDOWN_FILE)
-            cooldowns = load_json(COOLDOWN_FILE, default={})
+            if abs(pnl_pct) >= COOLDOWN_PNL_THRESHOLD_PCT:
+                ensure_parent_dir(COOLDOWN_FILE)
+                cooldowns = load_json(COOLDOWN_FILE, default={})
 
-            direction_key = f"{sym_id}_{side_dir}"  # long/short
-            now_ts = time.time()
-            cooldowns[direction_key] = now_ts
-            cooldowns[sym_id] = now_ts
+                direction_key = f"{sym_id}_{side_dir}"  # long/short
+                now_ts = time.time()
+                cooldowns[direction_key] = now_ts
+                cooldowns[sym_id] = now_ts
 
-            save_json(COOLDOWN_FILE, cooldowns)
-            print(f"💾 Cooldown salvato per {direction_key}")
+                save_json(COOLDOWN_FILE, cooldowns)
+                print(f"💾 Cooldown salvato per {direction_key} (PnL {pnl_pct:.2f}%)")
+            else:
+                print(f"ℹ️ Cooldown non applicato: PnL {pnl_pct:.2f}% < {COOLDOWN_PNL_THRESHOLD_PCT}%")
         except Exception as e:
             print(f"⚠️ Errore salvataggio cooldown: {e}")
 
@@ -798,10 +841,21 @@ def check_recent_closes_and_save_cooldown():
 
             existing_time = to_float(cooldowns.get(direction_key), 0.0)
             if close_time_sec > existing_time:
-                cooldowns[direction_key] = close_time_sec
-                cooldowns[symbol_raw] = close_time_sec
-                changed = True
-                print(f"💾 Cooldown auto-salvato per {direction_key} (chiusura Bybit)")
+                avg_entry_price = to_float(item.get("avgEntryPrice"), 0.0)
+                closed_pnl = to_float(item.get("closedPnl"), 0.0)
+                leverage = max(1.0, to_float(item.get("leverage"), 1.0))
+                qty = to_float(item.get("qty"), 0.0)
+                pnl_pct = None
+                if avg_entry_price > 0 and qty > 0:
+                    pnl_pct = (closed_pnl / (avg_entry_price * qty)) * leverage * 100.0
+
+                if pnl_pct is not None and abs(pnl_pct) >= COOLDOWN_PNL_THRESHOLD_PCT:
+                    cooldowns[direction_key] = close_time_sec
+                    cooldowns[symbol_raw] = close_time_sec
+                    changed = True
+                    print(f"💾 Cooldown auto-salvato per {direction_key} (PnL {pnl_pct:.2f}%)")
+                else:
+                    print("ℹ️ Cooldown auto non applicato: PnL sotto soglia o non calcolabile")
 
                 # learning record
                 try:
