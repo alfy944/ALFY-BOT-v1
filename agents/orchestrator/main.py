@@ -16,7 +16,12 @@ CYCLE_INTERVAL = 60  # Secondi tra ogni ciclo di controllo (era 900)
 AI_DECISIONS_FILE = "/data/ai_decisions.json"
 BYBIT_TICKERS_URL = "https://api.bybit.com/v5/market/tickers"
 USE_TRENDING = os.getenv("USE_TRENDING_SYMBOLS", "true").lower() == "true"
-TRENDING_LIMIT = int(os.getenv("TRENDING_SYMBOLS_LIMIT", "6"))
+TRENDING_LIMIT = int(os.getenv("TRENDING_SYMBOLS_LIMIT", "5"))
+EXCLUDED_SYMBOLS = {
+    sym.strip().upper()
+    for sym in os.getenv("EXCLUDED_SYMBOLS", "BTCUSDT,ETHUSDT,SOLUSDT").split(",")
+    if sym.strip()
+}
 
 def save_monitoring_decision(positions_count: int, max_positions: int, positions_details: list, reason: str):
     """Salva la decisione di monitoraggio per la dashboard"""
@@ -79,7 +84,7 @@ async def fetch_trending_symbols(client: httpx.AsyncClient) -> list:
         symbols = []
         for row in ranked:
             sym = row.get("symbol")
-            if sym and sym.endswith("USDT"):
+            if sym and sym.endswith("USDT") and sym not in EXCLUDED_SYMBOLS:
                 symbols.append(sym)
             if len(symbols) >= TRENDING_LIMIT:
                 break
@@ -100,7 +105,7 @@ async def get_symbol_universe(client: httpx.AsyncClient) -> list:
         return trending
 
     print("⚠️ Nessun trending disponibile, uso lista di default")
-    return DEFAULT_SYMBOLS
+    return [s for s in DEFAULT_SYMBOLS if s not in EXCLUDED_SYMBOLS][:TRENDING_LIMIT]
 
 async def analysis_cycle():
     async with httpx.AsyncClient(timeout=60) as c:
