@@ -25,6 +25,9 @@ IS_TESTNET = os.getenv("BYBIT_TESTNET", "false").lower() == "true"
 # Se usi Hedge Mode su Bybit (posizioni long/short contemporanee),
 # metti BYBIT_HEDGE_MODE=true. Se non sei sicuro, lascialo false.
 HEDGE_MODE = os.getenv("BYBIT_HEDGE_MODE", "false").lower() == "true"
+BYBIT_POSITION_MODE = os.getenv("BYBIT_POSITION_MODE", "oneway").lower()
+BYBIT_FORCE_POSITION_IDX = os.getenv("BYBIT_FORCE_POSITION_IDX", "false").lower() == "true"
+BYBIT_ENFORCE_ONEWAY = os.getenv("BYBIT_ENFORCE_ONEWAY", "true").lower() == "true"
 
 # --- PARAMETRI TRAILING STOP DINAMICO (ATR-BASED) ---
 TRAILING_ACTIVATION_PCT = float(os.getenv("TRAILING_ACTIVATION_PCT", "0.018"))  # 1.8% (leveraged ROI fraction)
@@ -39,6 +42,12 @@ ATR_MULTIPLIERS = {
 TECHNICAL_ANALYZER_URL = os.getenv("TECHNICAL_ANALYZER_URL", "http://01_technical_analyzer:8000").strip()
 FALLBACK_TRAILING_PCT = float(os.getenv("FALLBACK_TRAILING_PCT", "0.025"))  # 2.5%
 DEFAULT_INITIAL_SL_PCT = float(os.getenv("DEFAULT_INITIAL_SL_PCT", "0.04"))  # 4%
+BREAK_EVEN_R = float(os.getenv("BREAK_EVEN_R", "0.9"))
+TIME_STOP_MINUTES = int(os.getenv("TIME_STOP_MINUTES", "12"))
+PARTIAL_TP_PCT = float(os.getenv("PARTIAL_TP_PCT", "0.5"))
+PARTIAL_TP_R = float(os.getenv("PARTIAL_TP_R", "0.8"))
+TRAILING_ATR_MULTIPLIER = float(os.getenv("TRAILING_ATR_MULTIPLIER", "1.0"))
+ENTRY_ORDER_TYPE = os.getenv("ENTRY_ORDER_TYPE", "limit").lower()
 
 # --- PARAMETRI AI REVIEW / REVERSE ---
 ENABLE_AI_REVIEW = os.getenv("ENABLE_AI_REVIEW", "true").lower() == "true"
@@ -54,7 +63,9 @@ REVERSE_LEVERAGE = float(os.getenv("REVERSE_LEVERAGE", "5.0"))
 reverse_cooldown_tracker: Dict[str, float] = {}
 
 # --- COOLDOWN CONFIGURATION ---
-COOLDOWN_MINUTES = int(os.getenv("COOLDOWN_MINUTES", "5"))
+# Direzione specifica (long/short) dopo close: default 60 minuti
+COOLDOWN_MINUTES = int(os.getenv("COOLDOWN_MINUTES", "60"))
+COOLDOWN_PNL_THRESHOLD_PCT = float(os.getenv("COOLDOWN_PNL_THRESHOLD_PCT", "5.0"))
 COOLDOWN_FILE = os.getenv("COOLDOWN_FILE", "/data/closed_cooldown.json")
 
 # --- AI DECISIONS FILE ---
@@ -154,9 +165,33 @@ def direction_to_position_idx(direction: str) -> int:
     One-way:
       0
     """
-    if not HEDGE_MODE:
+    if not use_position_idx():
         return 0
     return 1 if direction == "long" else 2
+
+def should_use_position_idx() -> bool:
+    return (
+        HEDGE_MODE
+        and BYBIT_POSITION_MODE == "hedge"
+        and BYBIT_FORCE_POSITION_IDX
+        and not BYBIT_ENFORCE_ONEWAY
+    )
+
+POSITION_IDX_ENABLED = should_use_position_idx()
+
+def use_position_idx() -> bool:
+    return POSITION_IDX_ENABLED
+
+def disable_position_idx(reason: str) -> None:
+    global POSITION_IDX_ENABLED
+    if POSITION_IDX_ENABLED:
+        POSITION_IDX_ENABLED = False
+        print(f"⚠️ positionIdx disabilitato: {reason}")
+
+def strip_position_idx(params: dict) -> dict:
+    if BYBIT_ENFORCE_ONEWAY or BYBIT_POSITION_MODE != "hedge":
+        params.pop("positionIdx", None)
+    return params
 
 def get_position_idx_from_position(p: dict) -> int:
     """
@@ -440,6 +475,8 @@ def check_and_update_trailing_stops():
                 position_risk_meta[sym_id] = {
                     "entry_price": entry_price,
                     "initial_sl": base_sl,
+                    "entry_ts": time.time(),
+                    "partial_tp_taken": False,
                 }
                 initial_sl_price = base_sl
 
@@ -450,11 +487,43 @@ def check_and_update_trailing_stops():
             if initial_sl_price and entry_price:
                 risk_distance = (entry_price - initial_sl_price) if side_dir == "long" else (initial_sl_price - entry_price)
 
+            # Time stop: close if trade stalls after N minutes
+            entry_ts = position_risk_meta.get(sym_id, {}).get("entry_ts", time.time())
+            elapsed_minutes = (time.time() - entry_ts) / 60.0
+            profit_distance = (mark_price - entry_price) if side_dir == "long" else (entry_price - mark_price)
+            if risk_distance > 0 and elapsed_minutes >= TIME_STOP_MINUTES:
+                if profit_distance < (risk_distance * 0.2):
+                    print(f"⏱️ Time-stop triggered for {symbol} ({side_dir}) after {elapsed_minutes:.1f}m")
+                    execute_close_position(symbol)
+                    continue
+
+            # Partial take profit at 1R
+            if risk_distance > 0 and not position_risk_meta.get(sym_id, {}).get("partial_tp_taken"):
+                if profit_distance >= (risk_distance * PARTIAL_TP_R):
+                    try:
+                        target_market = exchange.market(symbol)
+                        info = target_market.get("info", {}) or {}
+                        lot_filter = info.get("lotSizeFilter", {}) or {}
+                        qty_step = to_float(lot_filter.get("qtyStep") or (target_market.get("limits", {}).get("amount", {}) or {}).get("min"), 0.001)
+                        min_qty = to_float(lot_filter.get("minOrderQty") or qty_step, qty_step)
+                        partial_qty = max(qty * PARTIAL_TP_PCT, min_qty)
+                        partial_qty = float(exchange.amount_to_precision(symbol, partial_qty))
+                        if partial_qty >= min_qty:
+                            close_side = "sell" if side_dir == "long" else "buy"
+                            params = {"category": "linear", "reduceOnly": True}
+                            if use_position_idx():
+                                params["positionIdx"] = get_position_idx_from_position(p)
+                            params = strip_position_idx(params)
+                            exchange.create_order(symbol, "market", close_side, partial_qty, params=params)
+                            position_risk_meta[sym_id]["partial_tp_taken"] = True
+                            print(f"✅ Partial TP {symbol} {side_dir}: {partial_qty} @ {profit_distance:.6f}")
+                    except Exception as e:
+                        print(f"⚠️ Partial TP failed for {symbol}: {e}")
+
             # Break-even: lock stop to entry after 1R
             new_sl_price = None
             if risk_distance > 0:
-                profit_distance = (mark_price - entry_price) if side_dir == "long" else (entry_price - mark_price)
-                if profit_distance >= risk_distance:
+                if profit_distance >= (risk_distance * BREAK_EVEN_R):
                     target_be = entry_price
                     if side_dir == "long":
                         if sl_current == 0.0 or target_be > sl_current:
@@ -466,7 +535,7 @@ def check_and_update_trailing_stops():
 
             # Trailing ATR after break-even
             if (position_risk_meta.get(sym_id, {}).get("breakeven_reached") or sl_current == entry_price) and atr:
-                trailing_target = mark_price - (atr * 1.0) if side_dir == "long" else mark_price + (atr * 1.0)
+                trailing_target = mark_price - (atr * TRAILING_ATR_MULTIPLIER) if side_dir == "long" else mark_price + (atr * TRAILING_ATR_MULTIPLIER)
                 if side_dir == "long":
                     if sl_current == 0.0 or trailing_target > sl_current:
                         new_sl_price = max(new_sl_price or 0, trailing_target)
@@ -501,11 +570,12 @@ def check_and_update_trailing_stops():
                 continue
 
             price_str = exchange.price_to_precision(symbol, new_sl_price)
-            position_idx = get_position_idx_from_position(p)
+            position_idx = get_position_idx_from_position(p) if use_position_idx() else 0
 
             print(
                 f"🏃 SL UPDATE {symbol} ROI={roi*100:.2f}% "
-                f"SL {sl_current} -> {price_str} (ATR={atr}) idx={position_idx}"
+                f"SL {sl_current} -> {price_str} (ATR={atr})"
+                f"{f' idx={position_idx}' if use_position_idx() else ''}"
             )
 
             try:
@@ -514,8 +584,10 @@ def check_and_update_trailing_stops():
                     "symbol": market_id,
                     "tpslMode": "Full",
                     "stopLoss": price_str,
-                    "positionIdx": position_idx,
                 }
+                if use_position_idx():
+                    req["positionIdx"] = position_idx
+                req = strip_position_idx(req)
                 exchange.private_post_v5_position_trading_stop(req)
                 print("✅ SL Aggiornato con successo su Bybit")
             except Exception as api_err:
@@ -602,7 +674,7 @@ def execute_close_position(symbol: str) -> bool:
         leverage = max(1.0, to_float(position.get("leverage"), 1.0))
         side_dir = normalize_position_side(position.get("side", "")) or "long"
 
-        position_idx = get_position_idx_from_position(position)
+        position_idx = get_position_idx_from_position(position) if use_position_idx() else 0
 
         if entry_price > 0:
             pnl_raw = (mark_price - entry_price) / entry_price if side_dir == "long" else (entry_price - mark_price) / entry_price
@@ -616,8 +688,9 @@ def execute_close_position(symbol: str) -> bool:
         print(f"🔒 Chiudo posizione {sym_ccxt}: {side_dir} size={size} idx={position_idx}")
 
         params = {"category": "linear", "reduceOnly": True}
-        if HEDGE_MODE:
+        if use_position_idx():
             params["positionIdx"] = position_idx
+        params = strip_position_idx(params)
 
         exchange.create_order(sym_ccxt, "market", close_side, size, params=params)
 
@@ -631,18 +704,21 @@ def execute_close_position(symbol: str) -> bool:
             market_conditions={},
         )
 
-        # Cooldown
+        # Cooldown (solo se PnL supera la soglia)
         try:
-            ensure_parent_dir(COOLDOWN_FILE)
-            cooldowns = load_json(COOLDOWN_FILE, default={})
+            if abs(pnl_pct) >= COOLDOWN_PNL_THRESHOLD_PCT:
+                ensure_parent_dir(COOLDOWN_FILE)
+                cooldowns = load_json(COOLDOWN_FILE, default={})
 
-            direction_key = f"{sym_id}_{side_dir}"  # long/short
-            now_ts = time.time()
-            cooldowns[direction_key] = now_ts
-            cooldowns[sym_id] = now_ts
+                direction_key = f"{sym_id}_{side_dir}"  # long/short
+                now_ts = time.time()
+                cooldowns[direction_key] = now_ts
+                cooldowns[sym_id] = now_ts
 
-            save_json(COOLDOWN_FILE, cooldowns)
-            print(f"💾 Cooldown salvato per {direction_key}")
+                save_json(COOLDOWN_FILE, cooldowns)
+                print(f"💾 Cooldown salvato per {direction_key} (PnL {pnl_pct:.2f}%)")
+            else:
+                print(f"ℹ️ Cooldown non applicato: PnL {pnl_pct:.2f}% < {COOLDOWN_PNL_THRESHOLD_PCT}%")
         except Exception as e:
             print(f"⚠️ Errore salvataggio cooldown: {e}")
 
@@ -715,8 +791,9 @@ def execute_reverse(symbol: str, current_side_raw: str, recovery_size_pct: float
         )
 
         params = {"category": "linear", "stopLoss": sl_str}
-        if HEDGE_MODE:
+        if use_position_idx():
             params["positionIdx"] = pos_idx
+        params = strip_position_idx(params)
 
         res = exchange.create_order(sym_ccxt, "market", new_side, final_qty, params=params)
         print(f"✅ Reverse eseguito con successo: {res.get('id')}")
@@ -765,10 +842,21 @@ def check_recent_closes_and_save_cooldown():
 
             existing_time = to_float(cooldowns.get(direction_key), 0.0)
             if close_time_sec > existing_time:
-                cooldowns[direction_key] = close_time_sec
-                cooldowns[symbol_raw] = close_time_sec
-                changed = True
-                print(f"💾 Cooldown auto-salvato per {direction_key} (chiusura Bybit)")
+                avg_entry_price = to_float(item.get("avgEntryPrice"), 0.0)
+                closed_pnl = to_float(item.get("closedPnl"), 0.0)
+                leverage = max(1.0, to_float(item.get("leverage"), 1.0))
+                qty = to_float(item.get("qty"), 0.0)
+                pnl_pct = None
+                if avg_entry_price > 0 and qty > 0:
+                    pnl_pct = (closed_pnl / (avg_entry_price * qty)) * leverage * 100.0
+
+                if pnl_pct is not None and abs(pnl_pct) >= COOLDOWN_PNL_THRESHOLD_PCT:
+                    cooldowns[direction_key] = close_time_sec
+                    cooldowns[symbol_raw] = close_time_sec
+                    changed = True
+                    print(f"💾 Cooldown auto-salvato per {direction_key} (PnL {pnl_pct:.2f}%)")
+                else:
+                    print("ℹ️ Cooldown auto non applicato: PnL sotto soglia o non calcolabile")
 
                 # learning record
                 try:
@@ -1168,13 +1256,27 @@ def open_position(order: OrderRequest):
 
         pos_idx = direction_to_position_idx(requested_dir)
 
-        print(f"🚀 ORDER {sym_ccxt}: side={requested_side} qty={final_qty} SL={sl_str} idx={pos_idx}")
+        log_suffix = f" idx={pos_idx}" if use_position_idx() else ""
+        order_type = "limit" if ENTRY_ORDER_TYPE == "limit" else "market"
+        print(f"🚀 ORDER {sym_ccxt}: type={order_type} side={requested_side} qty={final_qty} SL={sl_str}{log_suffix}")
 
         params = {"category": "linear", "stopLoss": sl_str}
-        if HEDGE_MODE:
+        if use_position_idx():
             params["positionIdx"] = pos_idx
+        params = strip_position_idx(params)
 
-        res = exchange.create_order(sym_ccxt, "market", requested_side, final_qty, params=params)
+        try:
+            params = strip_position_idx(params)
+            res = exchange.create_order(sym_ccxt, order_type, requested_side, final_qty, price if order_type == "limit" else None, params)
+        except Exception as e:
+            err_msg = str(e)
+            if use_position_idx() and "position idx not match position mode" in err_msg.lower():
+                disable_position_idx("Bybit position mode mismatch")
+                params.pop("positionIdx", None)
+                params = strip_position_idx(params)
+                res = exchange.create_order(sym_ccxt, order_type, requested_side, final_qty, price if order_type == "limit" else None, params)
+            else:
+                raise
         position_risk_meta[sym_id] = {
             "entry_price": price,
             "initial_sl": sl_price,
