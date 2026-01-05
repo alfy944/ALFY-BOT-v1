@@ -42,11 +42,12 @@ ATR_MULTIPLIERS = {
 TECHNICAL_ANALYZER_URL = os.getenv("TECHNICAL_ANALYZER_URL", "http://01_technical_analyzer:8000").strip()
 FALLBACK_TRAILING_PCT = float(os.getenv("FALLBACK_TRAILING_PCT", "0.025"))  # 2.5%
 DEFAULT_INITIAL_SL_PCT = float(os.getenv("DEFAULT_INITIAL_SL_PCT", "0.04"))  # 4%
-BREAK_EVEN_R = float(os.getenv("BREAK_EVEN_R", "0.7"))
-TIME_STOP_MINUTES = int(os.getenv("TIME_STOP_MINUTES", "8"))
+BREAK_EVEN_R = float(os.getenv("BREAK_EVEN_R", "0.9"))
+TIME_STOP_MINUTES = int(os.getenv("TIME_STOP_MINUTES", "12"))
 PARTIAL_TP_PCT = float(os.getenv("PARTIAL_TP_PCT", "0.5"))
-PARTIAL_TP_R = float(os.getenv("PARTIAL_TP_R", "1.0"))
-TRAILING_ATR_MULTIPLIER = float(os.getenv("TRAILING_ATR_MULTIPLIER", "1.2"))
+PARTIAL_TP_R = float(os.getenv("PARTIAL_TP_R", "0.8"))
+TRAILING_ATR_MULTIPLIER = float(os.getenv("TRAILING_ATR_MULTIPLIER", "1.0"))
+ENTRY_ORDER_TYPE = os.getenv("ENTRY_ORDER_TYPE", "limit").lower()
 
 # --- PARAMETRI AI REVIEW / REVERSE ---
 ENABLE_AI_REVIEW = os.getenv("ENABLE_AI_REVIEW", "true").lower() == "true"
@@ -1256,7 +1257,8 @@ def open_position(order: OrderRequest):
         pos_idx = direction_to_position_idx(requested_dir)
 
         log_suffix = f" idx={pos_idx}" if use_position_idx() else ""
-        print(f"🚀 ORDER {sym_ccxt}: side={requested_side} qty={final_qty} SL={sl_str}{log_suffix}")
+        order_type = "limit" if ENTRY_ORDER_TYPE == "limit" else "market"
+        print(f"🚀 ORDER {sym_ccxt}: type={order_type} side={requested_side} qty={final_qty} SL={sl_str}{log_suffix}")
 
         params = {"category": "linear", "stopLoss": sl_str}
         if use_position_idx():
@@ -1265,14 +1267,14 @@ def open_position(order: OrderRequest):
 
         try:
             params = strip_position_idx(params)
-            res = exchange.create_order(sym_ccxt, "market", requested_side, final_qty, params=params)
+            res = exchange.create_order(sym_ccxt, order_type, requested_side, final_qty, price if order_type == "limit" else None, params)
         except Exception as e:
             err_msg = str(e)
             if use_position_idx() and "position idx not match position mode" in err_msg.lower():
                 disable_position_idx("Bybit position mode mismatch")
                 params.pop("positionIdx", None)
                 params = strip_position_idx(params)
-                res = exchange.create_order(sym_ccxt, "market", requested_side, final_qty, params=params)
+                res = exchange.create_order(sym_ccxt, order_type, requested_side, final_qty, price if order_type == "limit" else None, params)
             else:
                 raise
         position_risk_meta[sym_id] = {
