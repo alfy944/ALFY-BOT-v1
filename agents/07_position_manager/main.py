@@ -43,10 +43,10 @@ TECHNICAL_ANALYZER_URL = os.getenv("TECHNICAL_ANALYZER_URL", "http://01_technica
 FALLBACK_TRAILING_PCT = float(os.getenv("FALLBACK_TRAILING_PCT", "0.025"))  # 2.5%
 DEFAULT_INITIAL_SL_PCT = float(os.getenv("DEFAULT_INITIAL_SL_PCT", "0.04"))  # 4%
 BREAK_EVEN_R = float(os.getenv("BREAK_EVEN_R", "0.9"))
-TIME_STOP_MINUTES = int(os.getenv("TIME_STOP_MINUTES", "12"))
+TIME_STOP_MINUTES = int(os.getenv("TIME_STOP_MINUTES", "14"))
 PARTIAL_TP_PCT = float(os.getenv("PARTIAL_TP_PCT", "0.5"))
 PARTIAL_TP_R = float(os.getenv("PARTIAL_TP_R", "0.8"))
-TRAILING_ATR_MULTIPLIER = float(os.getenv("TRAILING_ATR_MULTIPLIER", "1.0"))
+TRAILING_ATR_MULTIPLIER = float(os.getenv("TRAILING_ATR_MULTIPLIER", "1.1"))
 ENTRY_ORDER_TYPE = os.getenv("ENTRY_ORDER_TYPE", "limit").lower()
 
 # --- PARAMETRI AI REVIEW / REVERSE ---
