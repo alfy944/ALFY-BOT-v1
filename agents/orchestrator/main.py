@@ -14,6 +14,7 @@ REVERSE_THRESHOLD = 2.0  # Percentuale perdita per trigger reverse analysis
 CYCLE_INTERVAL = 60  # Secondi tra ogni ciclo di controllo (era 900)
 
 AI_DECISIONS_FILE = "/data/ai_decisions.json"
+DAILY_STOP_STATE_FILE = "/data/daily_stop_state.json"
 BYBIT_TICKERS_URL = "https://api.bybit.com/v5/market/tickers"
 USE_TRENDING = os.getenv("USE_TRENDING_SYMBOLS", "true").lower() == "true"
 TRENDING_LIMIT = int(os.getenv("TRENDING_SYMBOLS_LIMIT", "5"))
@@ -22,6 +23,8 @@ EXCLUDED_SYMBOLS = {
     for sym in os.getenv("EXCLUDED_SYMBOLS", "BTCUSDT,ETHUSDT,SOLUSDT").split(",")
     if sym.strip()
 }
+DAILY_STOP_PCT = float(os.getenv("DAILY_STOP_PCT", "5.0"))
+DAILY_STOP_COOLDOWN_HOURS = int(os.getenv("DAILY_STOP_COOLDOWN_HOURS", "24"))
 
 def save_monitoring_decision(positions_count: int, max_positions: int, positions_details: list, reason: str):
     """Salva la decisione di monitoraggio per la dashboard"""
@@ -107,6 +110,61 @@ async def get_symbol_universe(client: httpx.AsyncClient) -> list:
     print("⚠️ Nessun trending disponibile, uso lista di default")
     return [s for s in DEFAULT_SYMBOLS if s not in EXCLUDED_SYMBOLS][:TRENDING_LIMIT]
 
+def load_daily_stop_state() -> dict:
+    try:
+        if os.path.exists(DAILY_STOP_STATE_FILE):
+            with open(DAILY_STOP_STATE_FILE, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+def save_daily_stop_state(state: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(DAILY_STOP_STATE_FILE), exist_ok=True)
+        with open(DAILY_STOP_STATE_FILE, "w") as f:
+            json.dump(state, f, indent=2)
+    except Exception as e:
+        print(f"⚠️ Error saving daily stop state: {e}")
+
+def should_block_for_daily_stop(current_equity: float) -> bool:
+    today_key = datetime.utcnow().date().isoformat()
+    state = load_daily_stop_state()
+    cooldown_until = state.get("cooldown_until")
+    if cooldown_until:
+        try:
+            if datetime.utcnow().timestamp() < float(cooldown_until):
+                return True
+        except Exception:
+            pass
+
+    day_state = state.get(today_key, {})
+    start_equity = day_state.get("start_equity")
+    if start_equity is None and current_equity > 0:
+        state[today_key] = {"start_equity": current_equity}
+        save_daily_stop_state(state)
+        return False
+
+    try:
+        start_equity = float(start_equity or 0)
+        if start_equity > 0:
+            drawdown_pct = ((current_equity - start_equity) / start_equity) * 100.0
+            if drawdown_pct <= -abs(DAILY_STOP_PCT):
+                cooldown_until_ts = datetime.utcnow().timestamp() + (DAILY_STOP_COOLDOWN_HOURS * 3600)
+                state["cooldown_until"] = cooldown_until_ts
+                state["cooldown_reason"] = {
+                    "date": today_key,
+                    "drawdown_pct": round(drawdown_pct, 2),
+                    "threshold": DAILY_STOP_PCT,
+                }
+                save_daily_stop_state(state)
+                print(f"🛑 Daily stop triggered: {drawdown_pct:.2f}% <= -{DAILY_STOP_PCT}%")
+                return True
+    except Exception:
+        pass
+
+    return False
+
 async def analysis_cycle():
     async with httpx.AsyncClient(timeout=60) as c:
         
@@ -133,6 +191,15 @@ async def analysis_cycle():
 
         num_positions = len(active_symbols)
         print(f"\n[{datetime.now().strftime('%H:%M')}] 📊 Position check: {num_positions}/{MAX_POSITIONS} posizioni aperte")
+
+        if should_block_for_daily_stop(float(portfolio.get("equity", 0) or 0)):
+            save_monitoring_decision(
+                positions_count=len(position_details),
+                max_positions=MAX_POSITIONS,
+                positions_details=position_details,
+                reason=f"Daily stop attivo: drawdown >= {DAILY_STOP_PCT}%, pausa {DAILY_STOP_COOLDOWN_HOURS}h.",
+            )
+            return
         
         # 2. LOGICA OTTIMIZZAZIONE
         positions_losing = []
