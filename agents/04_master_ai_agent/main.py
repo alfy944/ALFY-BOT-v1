@@ -28,7 +28,7 @@ AGENT_URLS = {
 
 # Default parameters (fallback)
 DEFAULT_PARAMS = {
-    "default_leverage": 5,
+    "default_leverage": 3,
     "size_pct": 0.15,
     "reverse_threshold": 2.0,
     "atr_multiplier_sl": 2.0,
@@ -43,8 +43,8 @@ DEFAULT_PARAMS = {
 DEFAULT_CONTROLS = {
     "disable_symbols": [],
     "disable_regimes": [],
-    "max_trades_per_hour": 0,
-    "cooldown_minutes": 0,
+    "max_trades_per_hour": 1,
+    "cooldown_minutes": 45,
     "safe_mode": False,
     "max_trades_per_day": None,
     "size_cap": None,
@@ -158,7 +158,7 @@ class Decision(BaseModel):
 
     # Validator permissivi
     @field_validator("leverage")
-    def clamp_lev(cls, v): return max(1.0, min(v, 10.0))
+    def clamp_lev(cls, v): return max(1.0, min(v, 3.0))
 
     @model_validator(mode="after")
     def normalize_size(cls, values):
@@ -236,14 +236,14 @@ def load_evolved_config() -> Dict[str, Any]:
 
 
 SYSTEM_PROMPT = """
-Sei un TRADER ALGORITMICO AGGRESSIVO ma DISCIPLINATO.
-Il tuo compito è analizzare e poi AGIRE solo se i segnali sono solidi.
+Sei un TRADER ALGORITMICO DISCIPLINATO e PRUDENTE.
+Il tuo compito è analizzare e AGIRE solo quando i segnali sono chiari e concordi.
 
 LINEE GUIDA CHIAVE:
-- Se i segnali tecnici sono chiari e coerenti con il trend -> apri la posizione (OPEN_LONG/OPEN_SHORT).
-- Se i segnali sono deboli o misti -> scegli esplicitamente HOLD.
+- Se i segnali tecnici sono forti e coerenti con il trend -> apri la posizione (OPEN_LONG/OPEN_SHORT).
+- Se i segnali sono deboli, misti o rumorosi -> scegli esplicitamente HOLD.
 - Se esistono posizioni aperte valuta la coerenza prima di aprire nuove operazioni.
-- Usa leva e size in base alla qualità del setup (non default fissi).
+- Usa leva e size in base alla qualità del setup (non default fissi) e privilegia la conservazione del capitale.
 
 FORMATO RISPOSTA JSON OBBLIGATORIO:
 {
@@ -268,21 +268,57 @@ def decide_batch(payload: AnalysisPayload):
         confidence = config.get('agent_confidence', 0.0)
         params = config.get('params', DEFAULT_PARAMS.copy()) if confidence >= 0.4 else DEFAULT_PARAMS.copy()
         controls = config.get('controls', DEFAULT_CONTROLS.copy()) if confidence >= 0.4 else DEFAULT_CONTROLS.copy()
+        reward = config.get('reward', {}) or {}
+
+        negative_performance = bool(
+            (reward.get("reward", 0) < 0)
+            or (reward.get("pnl", 0) < 0)
+            or (reward.get("total_pnl", 0) < 0)
+        )
 
         if controls.get('safe_mode'):
             controls.setdefault('max_trades_per_day', 1)
             controls.setdefault('size_cap', 0.05)
+        if negative_performance:
+            controls['max_trades_per_hour'] = min(controls.get('max_trades_per_hour') or 1, 1)
+            controls['cooldown_minutes'] = max(int(controls.get('cooldown_minutes') or 0), 60)
+            controls['max_trades_per_day'] = min(controls.get('max_trades_per_day') or params.get('max_daily_trades', 3), 1)
         logger.info(f"🤝 Using controls: {controls} (confidence={confidence})")
         
         # Semplificazione dati per prompt
         assets_summary = {}
         for k, v in payload.assets_data.items():
             t = v.get('tech', {})
+            scalp_setup = t.get('scalp_setup', {}) if isinstance(t, dict) else {}
+            timeframes = scalp_setup.get('timeframes', {}) if isinstance(scalp_setup, dict) else {}
+            tf_1m = timeframes.get('1m', {}) if isinstance(timeframes, dict) else {}
+            regime = scalp_setup.get('regime', {}) if isinstance(scalp_setup, dict) else {}
+            trend_scalp = scalp_setup.get('trend_scalp', {}) if isinstance(scalp_setup, dict) else {}
+            reversal_scalp = scalp_setup.get('reversal_scalp', {}) if isinstance(scalp_setup, dict) else {}
+            extreme_reversal_scalp = scalp_setup.get('extreme_reversal_scalp', {}) if isinstance(scalp_setup, dict) else {}
             assets_summary[k] = {
                 "price": t.get('price'),
                 "trend": t.get('trend'),
+                "trend_1h": t.get('trend_1h'),
                 "macd_hist": t.get('macd_hist'),
-                "macd": t.get('macd')
+                "macd": t.get('macd'),
+                "rsi": t.get('rsi'),
+                "rsi_7": t.get('rsi_7'),
+                "atr_pct": tf_1m.get('atr_pct'),
+                "ema_dist": tf_1m.get('ema_dist'),
+                "regime": regime.get('mode'),
+                "trend_scalp": {
+                    "long": trend_scalp.get('long'),
+                    "short": trend_scalp.get('short'),
+                },
+                "reversal_scalp": {
+                    "long": reversal_scalp.get('long'),
+                    "short": reversal_scalp.get('short'),
+                },
+                "extreme_reversal_scalp": {
+                    "long": extreme_reversal_scalp.get('long'),
+                    "short": extreme_reversal_scalp.get('short'),
+                },
             }
             
         prompt_data = {
@@ -318,7 +354,7 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 {"role": "user", "content": f"ANALIZZA E AGISCI: {json.dumps(prompt_data)}"},
             ],
             response_format={"type": "json_object"},
-            temperature=0.7, # Più creatività = più trade
+            temperature=0.3,
         )
         
         # Logga i costi API per tracking DeepSeek
@@ -373,6 +409,19 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 if limit_day and open_day_count >= limit_day:
                     d['action'] = 'HOLD'
                     rationale_suffix.append('max trades/day reached')
+
+            # Higher timeframe alignment (15m + 1h trend)
+            if is_open_action(d.get('action', '')):
+                asset_view = assets_summary.get(symbol_key, {})
+                trend_15m = (asset_view.get("trend") or "").upper()
+                trend_1h = (asset_view.get("trend_1h") or "").upper()
+                if trend_15m and trend_1h:
+                    if d.get('action') == "OPEN_LONG" and not (trend_15m == "BULLISH" and trend_1h == "BULLISH"):
+                        d['action'] = 'HOLD'
+                        rationale_suffix.append('trend 15m/1h not aligned')
+                    if d.get('action') == "OPEN_SHORT" and not (trend_15m == "BEARISH" and trend_1h == "BEARISH"):
+                        d['action'] = 'HOLD'
+                        rationale_suffix.append('trend 15m/1h not aligned')
 
             # Safe mode sizing
             if controls.get('safe_mode') and is_open_action(d.get('action', '')):

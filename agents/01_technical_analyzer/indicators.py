@@ -71,7 +71,8 @@ class CryptoTechnicalAnalysisBybit:
         df_1m = self.fetch_ohlcv(ticker, "1m", limit=200)
         df_3m = self.fetch_ohlcv(ticker, "3m", limit=200)
         df_5m = self.fetch_ohlcv(ticker, "5m", limit=200)
-        if df.empty or df_1m.empty or df_3m.empty or df_5m.empty:
+        df_1h = self.fetch_ohlcv(ticker, "1h", limit=200)
+        if df.empty or df_1m.empty or df_3m.empty or df_5m.empty or df_1h.empty:
             return {}
 
         df["ema_20"] = self.calculate_ema(df["close"], 20)
@@ -102,7 +103,9 @@ class CryptoTechnicalAnalysisBybit:
         df_5m["ema_9"] = self.calculate_ema(df_5m["close"], 9)
         df_5m["ema_21"] = self.calculate_ema(df_5m["close"], 21)
 
-        if len(df) < 3 or len(df_1m) < 3 or len(df_3m) < 3 or len(df_5m) < 3:
+        df_1h["ema_50"] = self.calculate_ema(df_1h["close"], 50)
+
+        if len(df) < 3 or len(df_1m) < 3 or len(df_3m) < 3 or len(df_5m) < 3 or len(df_1h) < 3:
             return {}
 
         last = df.iloc[-1]
@@ -114,10 +117,12 @@ class CryptoTechnicalAnalysisBybit:
         prev_3m = df_3m.iloc[-2]
         last_5m = df_5m.iloc[-1]
         prev_5m = df_5m.iloc[-2]
+        last_1h = df_1h.iloc[-1]
 
         pp = self.calculate_pivot_points(last["high"], last["low"], last["close"])
 
         trend = "BULLISH" if last["close"] > last["ema_50"] else "BEARISH"
+        trend_1h = "BULLISH" if last_1h["close"] > last_1h["ema_50"] else "BEARISH"
         macd_trend = "POSITIVE" if last["macd_line"] > last["macd_signal"] else "NEGATIVE"
 
         # Momentum exit conditions (per-bar, candle close driven)
@@ -226,6 +231,7 @@ class CryptoTechnicalAnalysisBybit:
             "symbol": ticker,
             "price": float(last["close"]),
             "trend": trend,
+            "trend_1h": trend_1h,
             "rsi": float(round(last["rsi_14"], 2)),
             "rsi_7": float(round(last["rsi_7"], 2)),
             "macd": macd_trend,
