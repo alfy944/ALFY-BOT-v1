@@ -28,7 +28,7 @@ AGENT_URLS = {
 
 # Default parameters (fallback)
 DEFAULT_PARAMS = {
-    "default_leverage": 5,
+    "default_leverage": 3,
     "size_pct": 0.15,
     "reverse_threshold": 2.0,
     "atr_multiplier_sl": 2.0,
@@ -158,7 +158,7 @@ class Decision(BaseModel):
 
     # Validator permissivi
     @field_validator("leverage")
-    def clamp_lev(cls, v): return max(1.0, min(v, 10.0))
+    def clamp_lev(cls, v): return max(1.0, min(v, 3.0))
 
     @model_validator(mode="after")
     def normalize_size(cls, values):
