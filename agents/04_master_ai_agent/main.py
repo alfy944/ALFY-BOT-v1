@@ -173,22 +173,6 @@ def is_open_action(action: str) -> bool:
     return action in ("OPEN_LONG", "OPEN_SHORT")
 
 
-def count_recent_actions(decisions: list, minutes: int, action_filter=None) -> int:
-    cutoff = datetime.utcnow().timestamp() - minutes * 60
-    count = 0
-    for d in decisions:
-        ts = d.get('timestamp')
-        try:
-            ts_val = datetime.fromisoformat(ts).timestamp()
-        except Exception:
-            continue
-        if ts_val < cutoff:
-            continue
-        if action_filter and d.get('action') not in action_filter:
-            continue
-        count += 1
-    return count
-
 class AnalysisPayload(BaseModel):
     global_data: Dict[str, Any]
     assets_data: Dict[str, Any]
@@ -268,14 +252,6 @@ def decide_batch(payload: AnalysisPayload):
         confidence = config.get('agent_confidence', 0.0)
         params = config.get('params', DEFAULT_PARAMS.copy()) if confidence >= 0.4 else DEFAULT_PARAMS.copy()
         controls = config.get('controls', DEFAULT_CONTROLS.copy()) if confidence >= 0.4 else DEFAULT_CONTROLS.copy()
-        reward = config.get('reward', {}) or {}
-
-        negative_performance = bool(
-            (reward.get("reward", 0) < 0)
-            or (reward.get("pnl", 0) < 0)
-            or (reward.get("total_pnl", 0) < 0)
-        )
-
         if controls.get('safe_mode'):
             controls.setdefault('max_trades_per_day', 1)
             controls.setdefault('size_cap', 0.05)
@@ -304,6 +280,10 @@ def decide_batch(payload: AnalysisPayload):
                 "macd": t.get('macd'),
                 "rsi": t.get('rsi'),
                 "rsi_7": t.get('rsi_7'),
+                "bb_upper": t.get('bb_upper'),
+                "bb_middle": t.get('bb_middle'),
+                "bb_lower": t.get('bb_lower'),
+                "bb_width": t.get('bb_width'),
                 "atr_pct": tf_1m.get('atr_pct'),
                 "ema_dist": tf_1m.get('ema_dist'),
                 "regime": regime.get('mode'),
@@ -340,8 +320,7 @@ PARAMETRI OTTIMIZZATI (dall'evoluzione automatica):
 CONTROLLI DI RISCHIO ATTIVI (da Learning Agent):
 - Disable symbols: {controls.get('disable_symbols')}
 - Disable regimes: {controls.get('disable_regimes')}
-- Max trades/hour: {controls.get('max_trades_per_hour')} | cooldown minutes: {controls.get('cooldown_minutes')}
-- Safe mode: {controls.get('safe_mode')} | max trades/day: {controls.get('max_trades_per_day')} | size cap: {controls.get('size_cap')}
+- Safe mode: {controls.get('safe_mode')} | size cap: {controls.get('size_cap')}
 Confidence del modello: {confidence}
 
 USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
@@ -369,12 +348,6 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
         
         decision_json = json.loads(content)
 
-        state = load_master_state()
-        open_hour_count = count_recent_actions(state.get('decisions', []), 60, action_filter=["OPEN_LONG", "OPEN_SHORT"])
-        open_day_count = count_recent_actions(state.get('decisions', []), 24 * 60, action_filter=["OPEN_LONG", "OPEN_SHORT"])
-        symbol_cooldowns = state.get('symbol_cooldowns', {}) or {}
-        now_ts = datetime.utcnow().timestamp()
-
         valid_decisions = []
         for d in decision_json.get("decisions", []):
             symbol_key = (d.get('symbol') or '').upper()
@@ -390,25 +363,18 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 d['action'] = 'HOLD'
                 rationale_suffix.append('blocked by regime filter')
 
-            # Cooldown per symbol
-            cd_minutes = controls.get('cooldown_minutes') or 0
-            if cd_minutes > 0:
-                last_ts = symbol_cooldowns.get(symbol_key, 0)
-                if last_ts and (now_ts - last_ts) < cd_minutes * 60 and is_open_action(d.get('action', '')):
-                    d['action'] = 'HOLD'
-                    rationale_suffix.append('cooldown active')
-
-            # Trade frequency limits
+            # Higher timeframe alignment (15m + 1h trend)
             if is_open_action(d.get('action', '')):
-                limit_hour = controls.get('max_trades_per_hour') or 0
-                limit_day = controls.get('max_trades_per_day') or params.get('max_daily_trades')
-
-                if limit_hour and open_hour_count >= limit_hour:
-                    d['action'] = 'HOLD'
-                    rationale_suffix.append('max trades/hour reached')
-                if limit_day and open_day_count >= limit_day:
-                    d['action'] = 'HOLD'
-                    rationale_suffix.append('max trades/day reached')
+                asset_view = assets_summary.get(symbol_key, {})
+                trend_15m = (asset_view.get("trend") or "").upper()
+                trend_1h = (asset_view.get("trend_1h") or "").upper()
+                if trend_15m and trend_1h:
+                    if d.get('action') == "OPEN_LONG" and not (trend_15m == "BULLISH" and trend_1h == "BULLISH"):
+                        d['action'] = 'HOLD'
+                        rationale_suffix.append('trend 15m/1h not aligned')
+                    if d.get('action') == "OPEN_SHORT" and not (trend_15m == "BEARISH" and trend_1h == "BEARISH"):
+                        d['action'] = 'HOLD'
+                        rationale_suffix.append('trend 15m/1h not aligned')
 
             # Higher timeframe alignment (15m + 1h trend)
             if is_open_action(d.get('action', '')):
@@ -437,12 +403,6 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
 
             try:
                 valid_dec = Decision(**d)
-                # Update counters if we will place an open trade
-                if is_open_action(valid_dec.action):
-                    open_hour_count += 1
-                    open_day_count += 1
-                    symbol_cooldowns[symbol_key] = now_ts
-
                 valid_decisions.append(valid_dec)
 
                 # Salva la decisione per la dashboard
@@ -456,10 +416,6 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                 })
             except Exception as e:
                 logger.warning(f"Invalid decision: {e}")
-
-        # Persist updated cooldowns
-        state['symbol_cooldowns'] = symbol_cooldowns
-        save_master_state(state)
 
         return {
             "analysis": decision_json.get("analysis_summary", "No analysis"),
