@@ -43,8 +43,8 @@ DEFAULT_PARAMS = {
 DEFAULT_CONTROLS = {
     "disable_symbols": [],
     "disable_regimes": [],
-    "max_trades_per_hour": 0,
-    "cooldown_minutes": 0,
+    "max_trades_per_hour": 1,
+    "cooldown_minutes": 45,
     "safe_mode": False,
     "max_trades_per_day": None,
     "size_cap": None,
@@ -255,6 +255,10 @@ def decide_batch(payload: AnalysisPayload):
         if controls.get('safe_mode'):
             controls.setdefault('max_trades_per_day', 1)
             controls.setdefault('size_cap', 0.05)
+        if negative_performance:
+            controls['max_trades_per_hour'] = min(controls.get('max_trades_per_hour') or 1, 1)
+            controls['cooldown_minutes'] = max(int(controls.get('cooldown_minutes') or 0), 60)
+            controls['max_trades_per_day'] = min(controls.get('max_trades_per_day') or params.get('max_daily_trades', 3), 1)
         logger.info(f"🤝 Using controls: {controls} (confidence={confidence})")
         
         # Semplificazione dati per prompt
@@ -358,6 +362,19 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
             if regime and regime.lower() in [str(r).lower() for r in controls.get('disable_regimes', [])]:
                 d['action'] = 'HOLD'
                 rationale_suffix.append('blocked by regime filter')
+
+            # Higher timeframe alignment (15m + 1h trend)
+            if is_open_action(d.get('action', '')):
+                asset_view = assets_summary.get(symbol_key, {})
+                trend_15m = (asset_view.get("trend") or "").upper()
+                trend_1h = (asset_view.get("trend_1h") or "").upper()
+                if trend_15m and trend_1h:
+                    if d.get('action') == "OPEN_LONG" and not (trend_15m == "BULLISH" and trend_1h == "BULLISH"):
+                        d['action'] = 'HOLD'
+                        rationale_suffix.append('trend 15m/1h not aligned')
+                    if d.get('action') == "OPEN_SHORT" and not (trend_15m == "BEARISH" and trend_1h == "BEARISH"):
+                        d['action'] = 'HOLD'
+                        rationale_suffix.append('trend 15m/1h not aligned')
 
             # Higher timeframe alignment (15m + 1h trend)
             if is_open_action(d.get('action', '')):
