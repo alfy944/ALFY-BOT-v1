@@ -48,6 +48,7 @@ PARTIAL_TP_PCT = float(os.getenv("PARTIAL_TP_PCT", "0.5"))
 PARTIAL_TP_R = float(os.getenv("PARTIAL_TP_R", "0.8"))
 TRAILING_ATR_MULTIPLIER = float(os.getenv("TRAILING_ATR_MULTIPLIER", "1.1"))
 ENTRY_ORDER_TYPE = os.getenv("ENTRY_ORDER_TYPE", "limit").lower()
+STOP_LOSS_ENABLED = os.getenv("STOP_LOSS_ENABLED", "false").lower() == "true"
 
 # --- PARAMETRI AI REVIEW / REVERSE ---
 ENABLE_AI_REVIEW = os.getenv("ENABLE_AI_REVIEW", "true").lower() == "true"
@@ -1247,20 +1248,26 @@ def open_position(order: OrderRequest):
             final_qty_d = Decimal(str(min_qty))
         final_qty = float("{:f}".format(final_qty_d.normalize()))
 
-        if atr_value:
-            sl_price = price - (atr_value * 1.2) if requested_dir == "long" else price + (atr_value * 1.2)
-        else:
-            sl_pct = float(order.sl_pct) if float(order.sl_pct) > 0 else DEFAULT_INITIAL_SL_PCT
-            sl_price = price * (1 - sl_pct) if requested_dir == "long" else price * (1 + sl_pct)
-        sl_str = exchange.price_to_precision(sym_ccxt, sl_price)
+        sl_price = None
+        sl_str = None
+        if STOP_LOSS_ENABLED:
+            if atr_value:
+                sl_price = price - (atr_value * 1.2) if requested_dir == "long" else price + (atr_value * 1.2)
+            else:
+                sl_pct = float(order.sl_pct) if float(order.sl_pct) > 0 else DEFAULT_INITIAL_SL_PCT
+                sl_price = price * (1 - sl_pct) if requested_dir == "long" else price * (1 + sl_pct)
+            sl_str = exchange.price_to_precision(sym_ccxt, sl_price)
 
         pos_idx = direction_to_position_idx(requested_dir)
 
         log_suffix = f" idx={pos_idx}" if use_position_idx() else ""
         order_type = "limit" if ENTRY_ORDER_TYPE == "limit" else "market"
-        print(f"🚀 ORDER {sym_ccxt}: type={order_type} side={requested_side} qty={final_qty} SL={sl_str}{log_suffix}")
+        sl_log = f" SL={sl_str}" if sl_str else ""
+        print(f"🚀 ORDER {sym_ccxt}: type={order_type} side={requested_side} qty={final_qty}{sl_log}{log_suffix}")
 
-        params = {"category": "linear", "stopLoss": sl_str}
+        params = {"category": "linear"}
+        if sl_str:
+            params["stopLoss"] = sl_str
         if use_position_idx():
             params["positionIdx"] = pos_idx
         params = strip_position_idx(params)
