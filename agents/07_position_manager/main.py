@@ -457,11 +457,7 @@ def check_and_update_trailing_stops():
             momentum_exit = risk_data.get("momentum_exit") or {}
             ema_20 = to_float(risk_data.get("ema_20"), 0.0)
 
-            # Momentum-based soft exit (2/3 conditions)
-            if momentum_exit.get(side_dir):
-                print(f"⏱️ Momentum exit triggered for {symbol} ({side_dir}) - closing position")
-                execute_close_position(symbol)
-                continue
+            # Momentum-based soft exit disabled to avoid negative auto-closes
 
             # Track initial SL distance per symbol for 1R calculations
             meta = position_risk_meta.get(sym_id, {})
@@ -488,15 +484,10 @@ def check_and_update_trailing_stops():
             if initial_sl_price and entry_price:
                 risk_distance = (entry_price - initial_sl_price) if side_dir == "long" else (initial_sl_price - entry_price)
 
-            # Time stop: close if trade stalls after N minutes
+            # Time stop disabled to avoid negative auto-closes
             entry_ts = position_risk_meta.get(sym_id, {}).get("entry_ts", time.time())
             elapsed_minutes = (time.time() - entry_ts) / 60.0
             profit_distance = (mark_price - entry_price) if side_dir == "long" else (entry_price - mark_price)
-            if risk_distance > 0 and elapsed_minutes >= TIME_STOP_MINUTES:
-                if profit_distance < (risk_distance * 0.2):
-                    print(f"⏱️ Time-stop triggered for {symbol} ({side_dir}) after {elapsed_minutes:.1f}m")
-                    execute_close_position(symbol)
-                    continue
 
             # Partial take profit at 1R
             if risk_distance > 0 and not position_risk_meta.get(sym_id, {}).get("partial_tp_taken"):
