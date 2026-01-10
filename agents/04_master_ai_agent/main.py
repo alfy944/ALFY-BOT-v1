@@ -253,6 +253,7 @@ def decide_batch(payload: AnalysisPayload):
         confidence = config.get('agent_confidence', 0.0)
         params = config.get('params', DEFAULT_PARAMS.copy()) if confidence >= 0.4 else DEFAULT_PARAMS.copy()
         controls = config.get('controls', DEFAULT_CONTROLS.copy()) if confidence >= 0.4 else DEFAULT_CONTROLS.copy()
+        negative_performance = False
         if controls.get('safe_mode'):
             controls.setdefault('max_trades_per_day', 1)
             controls.setdefault('size_cap', 0.05)
