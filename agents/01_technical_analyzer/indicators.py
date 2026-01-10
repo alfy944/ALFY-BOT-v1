@@ -56,6 +56,12 @@ class CryptoTechnicalAnalysisBybit:
         cumulative_volume = df["volume"].cumsum()
         return cumulative_pv / cumulative_volume
 
+    def calculate_bollinger_bands(
+        self, data: pd.Series, window: int = 20, window_dev: float = 2.0
+    ) -> Tuple[pd.Series, pd.Series, pd.Series]:
+        bb = ta.volatility.BollingerBands(close=data, window=window, window_dev=window_dev)
+        return bb.bollinger_hband(), bb.bollinger_mavg(), bb.bollinger_lband()
+
     def calculate_pivot_points(self, high, low, close):
         pp = (high + low + close) / 3.0
         return {
@@ -71,7 +77,8 @@ class CryptoTechnicalAnalysisBybit:
         df_1m = self.fetch_ohlcv(ticker, "1m", limit=200)
         df_3m = self.fetch_ohlcv(ticker, "3m", limit=200)
         df_5m = self.fetch_ohlcv(ticker, "5m", limit=200)
-        if df.empty or df_1m.empty or df_3m.empty or df_5m.empty:
+        df_1h = self.fetch_ohlcv(ticker, "1h", limit=200)
+        if df.empty or df_1m.empty or df_3m.empty or df_5m.empty or df_1h.empty:
             return {}
 
         df["ema_20"] = self.calculate_ema(df["close"], 20)
@@ -83,6 +90,10 @@ class CryptoTechnicalAnalysisBybit:
         df["rsi_7"] = self.calculate_rsi(df["close"], 7)
         df["rsi_14"] = self.calculate_rsi(df["close"], 14)
         df["atr_14"] = self.calculate_atr(df["high"], df["low"], df["close"], 14)
+        bb_upper, bb_mid, bb_lower = self.calculate_bollinger_bands(df["close"])
+        df["bb_upper"] = bb_upper
+        df["bb_mid"] = bb_mid
+        df["bb_lower"] = bb_lower
 
         df_1m["ema_9"] = self.calculate_ema(df_1m["close"], 9)
         df_1m["ema_21"] = self.calculate_ema(df_1m["close"], 21)
@@ -102,7 +113,9 @@ class CryptoTechnicalAnalysisBybit:
         df_5m["ema_9"] = self.calculate_ema(df_5m["close"], 9)
         df_5m["ema_21"] = self.calculate_ema(df_5m["close"], 21)
 
-        if len(df) < 3 or len(df_1m) < 3 or len(df_3m) < 3 or len(df_5m) < 3:
+        df_1h["ema_50"] = self.calculate_ema(df_1h["close"], 50)
+
+        if len(df) < 3 or len(df_1m) < 3 or len(df_3m) < 3 or len(df_5m) < 3 or len(df_1h) < 3:
             return {}
 
         last = df.iloc[-1]
@@ -114,11 +127,16 @@ class CryptoTechnicalAnalysisBybit:
         prev_3m = df_3m.iloc[-2]
         last_5m = df_5m.iloc[-1]
         prev_5m = df_5m.iloc[-2]
+        last_1h = df_1h.iloc[-1]
 
         pp = self.calculate_pivot_points(last["high"], last["low"], last["close"])
 
         trend = "BULLISH" if last["close"] > last["ema_50"] else "BEARISH"
+        trend_1h = "BULLISH" if last_1h["close"] > last_1h["ema_50"] else "BEARISH"
         macd_trend = "POSITIVE" if last["macd_line"] > last["macd_signal"] else "NEGATIVE"
+        bb_width = 0.0
+        if last["bb_mid"]:
+            bb_width = (last["bb_upper"] - last["bb_lower"]) / last["bb_mid"]
 
         # Momentum exit conditions (per-bar, candle close driven)
         macd_hist_falling = (last["macd_hist"] < prev["macd_hist"]) and (prev["macd_hist"] < prev2["macd_hist"])
@@ -226,10 +244,15 @@ class CryptoTechnicalAnalysisBybit:
             "symbol": ticker,
             "price": float(last["close"]),
             "trend": trend,
+            "trend_1h": trend_1h,
             "rsi": float(round(last["rsi_14"], 2)),
             "rsi_7": float(round(last["rsi_7"], 2)),
             "macd": macd_trend,
             "macd_hist": float(round(last["macd_hist"], 6)),
+            "bb_upper": float(round(last["bb_upper"], 6)),
+            "bb_middle": float(round(last["bb_mid"], 6)),
+            "bb_lower": float(round(last["bb_lower"], 6)),
+            "bb_width": float(round(bb_width, 6)),
             "support": float(round(last["close"] - (2 * last["atr_14"]), 2)),
             "resistance": float(round(last["close"] + (2 * last["atr_14"]), 2)),
             "momentum_exit": {
