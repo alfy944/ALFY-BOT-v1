@@ -16,7 +16,9 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
-BB_MIN_WIDTH = float(os.getenv("BB_MIN_WIDTH", "0.002"))
+BB_MIN_WIDTH = float(os.getenv("BB_MIN_WIDTH", "0.001"))
+BB_BREACH_PCT = float(os.getenv("BB_BREACH_PCT", "0.002"))
+TREND_ALIGNMENT_REQUIRED = os.getenv("TREND_ALIGNMENT_REQUIRED", "false").lower() == "true"
 
 # Agent URLs for reverse analysis
 AGENT_URLS = {
@@ -376,16 +378,16 @@ USA QUESTI PARAMETRI EVOLUTI nelle tue decisioni.
                     d['action'] = 'HOLD'
                     rationale_suffix.append('bb_width too low')
                 if price is not None and bb_upper is not None and d.get('action') == "OPEN_LONG":
-                    if price > bb_upper:
+                    if price > (bb_upper * (1 + BB_BREACH_PCT)):
                         d['action'] = 'HOLD'
                         rationale_suffix.append('price above bb_upper')
                 if price is not None and bb_lower is not None and d.get('action') == "OPEN_SHORT":
-                    if price < bb_lower:
+                    if price < (bb_lower * (1 - BB_BREACH_PCT)):
                         d['action'] = 'HOLD'
                         rationale_suffix.append('price below bb_lower')
 
             # Higher timeframe alignment (15m + 1h trend)
-            if is_open_action(d.get('action', '')):
+            if TREND_ALIGNMENT_REQUIRED and is_open_action(d.get('action', '')):
                 asset_view = assets_summary.get(symbol_key, {})
                 trend_15m = (asset_view.get("trend") or "").upper()
                 trend_1h = (asset_view.get("trend_1h") or "").upper()
