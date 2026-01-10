@@ -25,6 +25,7 @@ EXCLUDED_SYMBOLS = {
 }
 DAILY_STOP_PCT = float(os.getenv("DAILY_STOP_PCT", "5.0"))
 DAILY_STOP_COOLDOWN_HOURS = int(os.getenv("DAILY_STOP_COOLDOWN_HOURS", "24"))
+DAILY_STOP_ENABLED = os.getenv("DAILY_STOP_ENABLED", "false").lower() == "true"
 
 def save_monitoring_decision(positions_count: int, max_positions: int, positions_details: list, reason: str):
     """Salva la decisione di monitoraggio per la dashboard"""
@@ -128,6 +129,8 @@ def save_daily_stop_state(state: dict) -> None:
         print(f"⚠️ Error saving daily stop state: {e}")
 
 def should_block_for_daily_stop(current_equity: float) -> bool:
+    if not DAILY_STOP_ENABLED:
+        return False
     today_key = datetime.utcnow().date().isoformat()
     state = load_daily_stop_state()
     cooldown_until = state.get("cooldown_until")
