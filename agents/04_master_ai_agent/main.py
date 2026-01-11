@@ -47,8 +47,8 @@ DEFAULT_PARAMS = {
 DEFAULT_CONTROLS = {
     "disable_symbols": [],
     "disable_regimes": [],
-    "max_trades_per_hour": 0,
-    "cooldown_minutes": 0,
+    "max_trades_per_hour": 1,
+    "cooldown_minutes": 45,
     "safe_mode": False,
     "max_trades_per_day": None,
     "size_cap": None,
@@ -260,6 +260,10 @@ def decide_batch(payload: AnalysisPayload):
         if controls.get('safe_mode'):
             controls.setdefault('max_trades_per_day', 1)
             controls.setdefault('size_cap', 0.05)
+        if negative_performance:
+            controls['max_trades_per_hour'] = min(controls.get('max_trades_per_hour') or 1, 1)
+            controls['cooldown_minutes'] = max(int(controls.get('cooldown_minutes') or 0), 60)
+            controls['max_trades_per_day'] = min(controls.get('max_trades_per_day') or params.get('max_daily_trades', 3), 1)
         logger.info(f"🤝 Using controls: {controls} (confidence={confidence})")
         
         # Semplificazione dati per prompt
