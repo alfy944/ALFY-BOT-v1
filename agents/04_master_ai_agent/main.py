@@ -483,10 +483,10 @@ async def analyze_reverse(payload: ReverseAnalysisRequest):
         # Raccolta dati da tutti gli agenti
         agents_data = {}
         
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0) as http_client:
             # Technical Analysis
             try:
-                resp = await client.post(
+                resp = await http_client.post(
                     f"{AGENT_URLS['technical']}/analyze_multi_tf",
                     json={"symbol": symbol}
                 )
@@ -499,7 +499,7 @@ async def analyze_reverse(payload: ReverseAnalysisRequest):
             
             # Fibonacci Analysis
             try:
-                resp = await client.post(
+                resp = await http_client.post(
                     f"{AGENT_URLS['fibonacci']}/analyze_fib",
                     json={"symbol": symbol}
                 )
@@ -512,7 +512,7 @@ async def analyze_reverse(payload: ReverseAnalysisRequest):
             
             # Gann Analysis
             try:
-                resp = await client.post(
+                resp = await http_client.post(
                     f"{AGENT_URLS['gann']}/analyze_gann",
                     json={"symbol": symbol}
                 )
@@ -525,7 +525,7 @@ async def analyze_reverse(payload: ReverseAnalysisRequest):
             
             # News Sentiment
             try:
-                resp = await client.post(
+                resp = await http_client.post(
                     f"{AGENT_URLS['news']}/analyze_sentiment",
                     json={"symbol": symbol}
                 )
@@ -538,7 +538,7 @@ async def analyze_reverse(payload: ReverseAnalysisRequest):
             
             # Forecaster
             try:
-                resp = await client.post(
+                resp = await http_client.post(
                     f"{AGENT_URLS['forecaster']}/forecast",
                     json={"symbol": symbol}
                 )
