@@ -48,6 +48,7 @@ PARTIAL_TP_PCT = float(os.getenv("PARTIAL_TP_PCT", "0.5"))
 PARTIAL_TP_R = float(os.getenv("PARTIAL_TP_R", "0.8"))
 TRAILING_ATR_MULTIPLIER = float(os.getenv("TRAILING_ATR_MULTIPLIER", "1.1"))
 ENTRY_ORDER_TYPE = os.getenv("ENTRY_ORDER_TYPE", "limit").lower()
+STOP_LOSS_ENABLED = False
 
 # --- PARAMETRI AI REVIEW / REVERSE ---
 ENABLE_AI_REVIEW = os.getenv("ENABLE_AI_REVIEW", "true").lower() == "true"
@@ -388,6 +389,7 @@ def get_market_risk_data(symbol: str) -> Dict[str, Any]:
                     "macd_hist": to_float(d.get("macd_hist"), None),
                     "rsi": to_float(d.get("rsi"), None),
                     "ema_20": to_float((d.get("details", {}) or {}).get("ema_20"), None),
+                    "bb_middle": to_float(d.get("bb_middle"), None),
                 }
     except Exception:
         pass
@@ -455,12 +457,20 @@ def check_and_update_trailing_stops():
             atr = risk_data.get("atr")
             momentum_exit = risk_data.get("momentum_exit") or {}
             ema_20 = to_float(risk_data.get("ema_20"), 0.0)
+            bb_middle = to_float(risk_data.get("bb_middle"), 0.0)
 
-            # Momentum-based soft exit (2/3 conditions)
-            if momentum_exit.get(side_dir):
-                print(f"⏱️ Momentum exit triggered for {symbol} ({side_dir}) - closing position")
-                execute_close_position(symbol)
-                continue
+            # Momentum-based soft exit disabled to avoid negative auto-closes
+
+            # Bollinger mid-band exit
+            if bb_middle > 0:
+                if side_dir == "long" and mark_price >= bb_middle:
+                    print(f"🎯 BB mid exit for {symbol} (long) @ {mark_price:.6f}")
+                    execute_close_position(symbol)
+                    continue
+                if side_dir == "short" and mark_price <= bb_middle:
+                    print(f"🎯 BB mid exit for {symbol} (short) @ {mark_price:.6f}")
+                    execute_close_position(symbol)
+                    continue
 
             # Track initial SL distance per symbol for 1R calculations
             meta = position_risk_meta.get(sym_id, {})
@@ -487,111 +497,86 @@ def check_and_update_trailing_stops():
             if initial_sl_price and entry_price:
                 risk_distance = (entry_price - initial_sl_price) if side_dir == "long" else (initial_sl_price - entry_price)
 
-            # Time stop: close if trade stalls after N minutes
+            # Time stop disabled to avoid negative auto-closes
             entry_ts = position_risk_meta.get(sym_id, {}).get("entry_ts", time.time())
             elapsed_minutes = (time.time() - entry_ts) / 60.0
             profit_distance = (mark_price - entry_price) if side_dir == "long" else (entry_price - mark_price)
-            if risk_distance > 0 and elapsed_minutes >= TIME_STOP_MINUTES:
-                if profit_distance < (risk_distance * 0.2):
-                    print(f"⏱️ Time-stop triggered for {symbol} ({side_dir}) after {elapsed_minutes:.1f}m")
-                    execute_close_position(symbol)
+
+            # Partial take profit disabled (BB-only exits)
+
+            if STOP_LOSS_ENABLED:
+                # Break-even: lock stop to entry after 1R
+                new_sl_price = None
+                if risk_distance > 0:
+                    if profit_distance >= (risk_distance * BREAK_EVEN_R):
+                        target_be = entry_price
+                        if side_dir == "long":
+                            if sl_current == 0.0 or target_be > sl_current:
+                                new_sl_price = target_be
+                        else:
+                            if sl_current == 0.0 or target_be < sl_current:
+                                new_sl_price = target_be
+                        position_risk_meta[sym_id]["breakeven_reached"] = True
+
+                # Trailing ATR after break-even
+                if (position_risk_meta.get(sym_id, {}).get("breakeven_reached") or sl_current == entry_price) and atr:
+                    trailing_target = mark_price - (atr * TRAILING_ATR_MULTIPLIER) if side_dir == "long" else mark_price + (atr * TRAILING_ATR_MULTIPLIER)
+                    if side_dir == "long":
+                        if sl_current == 0.0 or trailing_target > sl_current:
+                            new_sl_price = max(new_sl_price or 0, trailing_target)
+                    else:
+                        if sl_current == 0.0 or trailing_target < sl_current:
+                            new_sl_price = trailing_target if new_sl_price is None else min(new_sl_price, trailing_target)
+
+                    # Structure-aware trailing using EMA20 as dynamic support/resistance
+                    if ema_20 > 0 and atr:
+                        if side_dir == "long":
+                            structure_sl = ema_20 - (atr * 0.2)
+                            if sl_current == 0.0 or structure_sl > sl_current:
+                                new_sl_price = max(new_sl_price or 0, structure_sl)
+                        else:
+                            structure_sl = ema_20 + (atr * 0.2)
+                            if sl_current == 0.0 or structure_sl < sl_current:
+                                new_sl_price = structure_sl if new_sl_price is None else min(new_sl_price, structure_sl)
+
+                # Fallback trailing distance if ATR unavailable but break-even reached
+                if new_sl_price is None and (position_risk_meta.get(sym_id, {}).get("breakeven_reached") or sl_current == entry_price):
+                    trailing_distance = get_trailing_distance_pct(symbol, mark_price)
+                    if side_dir == "long":
+                        target_sl = mark_price * (1 - trailing_distance)
+                        if sl_current == 0.0 or target_sl > sl_current:
+                            new_sl_price = target_sl
+                    else:
+                        target_sl = mark_price * (1 + trailing_distance)
+                        if sl_current == 0.0 or target_sl < sl_current:
+                            new_sl_price = target_sl
+
+                if not new_sl_price:
                     continue
 
-            # Partial take profit at 1R
-            if risk_distance > 0 and not position_risk_meta.get(sym_id, {}).get("partial_tp_taken"):
-                if profit_distance >= (risk_distance * PARTIAL_TP_R):
-                    try:
-                        target_market = exchange.market(symbol)
-                        info = target_market.get("info", {}) or {}
-                        lot_filter = info.get("lotSizeFilter", {}) or {}
-                        qty_step = to_float(lot_filter.get("qtyStep") or (target_market.get("limits", {}).get("amount", {}) or {}).get("min"), 0.001)
-                        min_qty = to_float(lot_filter.get("minOrderQty") or qty_step, qty_step)
-                        partial_qty = max(qty * PARTIAL_TP_PCT, min_qty)
-                        partial_qty = float(exchange.amount_to_precision(symbol, partial_qty))
-                        if partial_qty >= min_qty:
-                            close_side = "sell" if side_dir == "long" else "buy"
-                            params = {"category": "linear", "reduceOnly": True}
-                            if use_position_idx():
-                                params["positionIdx"] = get_position_idx_from_position(p)
-                            params = strip_position_idx(params)
-                            exchange.create_order(symbol, "market", close_side, partial_qty, params=params)
-                            position_risk_meta[sym_id]["partial_tp_taken"] = True
-                            print(f"✅ Partial TP {symbol} {side_dir}: {partial_qty} @ {profit_distance:.6f}")
-                    except Exception as e:
-                        print(f"⚠️ Partial TP failed for {symbol}: {e}")
+                price_str = exchange.price_to_precision(symbol, new_sl_price)
+                position_idx = get_position_idx_from_position(p) if use_position_idx() else 0
 
-            # Break-even: lock stop to entry after 1R
-            new_sl_price = None
-            if risk_distance > 0:
-                if profit_distance >= (risk_distance * BREAK_EVEN_R):
-                    target_be = entry_price
-                    if side_dir == "long":
-                        if sl_current == 0.0 or target_be > sl_current:
-                            new_sl_price = target_be
-                    else:
-                        if sl_current == 0.0 or target_be < sl_current:
-                            new_sl_price = target_be
-                    position_risk_meta[sym_id]["breakeven_reached"] = True
+                print(
+                    f"🏃 SL UPDATE {symbol} ROI={roi*100:.2f}% "
+                    f"SL {sl_current} -> {price_str} (ATR={atr})"
+                    f"{f' idx={position_idx}' if use_position_idx() else ''}"
+                )
 
-            # Trailing ATR after break-even
-            if (position_risk_meta.get(sym_id, {}).get("breakeven_reached") or sl_current == entry_price) and atr:
-                trailing_target = mark_price - (atr * TRAILING_ATR_MULTIPLIER) if side_dir == "long" else mark_price + (atr * TRAILING_ATR_MULTIPLIER)
-                if side_dir == "long":
-                    if sl_current == 0.0 or trailing_target > sl_current:
-                        new_sl_price = max(new_sl_price or 0, trailing_target)
-                else:
-                    if sl_current == 0.0 or trailing_target < sl_current:
-                        new_sl_price = trailing_target if new_sl_price is None else min(new_sl_price, trailing_target)
-
-                # Structure-aware trailing using EMA20 as dynamic support/resistance
-                if ema_20 > 0 and atr:
-                    if side_dir == "long":
-                        structure_sl = ema_20 - (atr * 0.2)
-                        if sl_current == 0.0 or structure_sl > sl_current:
-                            new_sl_price = max(new_sl_price or 0, structure_sl)
-                    else:
-                        structure_sl = ema_20 + (atr * 0.2)
-                        if sl_current == 0.0 or structure_sl < sl_current:
-                            new_sl_price = structure_sl if new_sl_price is None else min(new_sl_price, structure_sl)
-
-            # Fallback trailing distance if ATR unavailable but break-even reached
-            if new_sl_price is None and (position_risk_meta.get(sym_id, {}).get("breakeven_reached") or sl_current == entry_price):
-                trailing_distance = get_trailing_distance_pct(symbol, mark_price)
-                if side_dir == "long":
-                    target_sl = mark_price * (1 - trailing_distance)
-                    if sl_current == 0.0 or target_sl > sl_current:
-                        new_sl_price = target_sl
-                else:
-                    target_sl = mark_price * (1 + trailing_distance)
-                    if sl_current == 0.0 or target_sl < sl_current:
-                        new_sl_price = target_sl
-
-            if not new_sl_price:
-                continue
-
-            price_str = exchange.price_to_precision(symbol, new_sl_price)
-            position_idx = get_position_idx_from_position(p) if use_position_idx() else 0
-
-            print(
-                f"🏃 SL UPDATE {symbol} ROI={roi*100:.2f}% "
-                f"SL {sl_current} -> {price_str} (ATR={atr})"
-                f"{f' idx={position_idx}' if use_position_idx() else ''}"
-            )
-
-            try:
-                req = {
-                    "category": "linear",
-                    "symbol": market_id,
-                    "tpslMode": "Full",
-                    "stopLoss": price_str,
-                }
-                if use_position_idx():
-                    req["positionIdx"] = position_idx
-                req = strip_position_idx(req)
-                exchange.private_post_v5_position_trading_stop(req)
-                print("✅ SL Aggiornato con successo su Bybit")
-            except Exception as api_err:
-                print(f"❌ Errore API Bybit (trading_stop): {api_err}")
+                try:
+                    req = {
+                        "category": "linear",
+                        "symbol": market_id,
+                        "tpslMode": "Full",
+                        "stopLoss": price_str,
+                    }
+                    if use_position_idx():
+                        req["positionIdx"] = position_idx
+                    req = strip_position_idx(req)
+                    exchange.private_post_v5_position_trading_stop(req)
+                    print("✅ SL Aggiornato con successo su Bybit")
+                except Exception as api_err:
+                    print(f"❌ Errore API Bybit (trading_stop): {api_err}")
 
     except Exception as e:
         print(f"⚠️ Trailing logic error: {e}")
@@ -1247,20 +1232,26 @@ def open_position(order: OrderRequest):
             final_qty_d = Decimal(str(min_qty))
         final_qty = float("{:f}".format(final_qty_d.normalize()))
 
-        if atr_value:
-            sl_price = price - (atr_value * 1.2) if requested_dir == "long" else price + (atr_value * 1.2)
-        else:
-            sl_pct = float(order.sl_pct) if float(order.sl_pct) > 0 else DEFAULT_INITIAL_SL_PCT
-            sl_price = price * (1 - sl_pct) if requested_dir == "long" else price * (1 + sl_pct)
-        sl_str = exchange.price_to_precision(sym_ccxt, sl_price)
+        sl_price = None
+        sl_str = None
+        if STOP_LOSS_ENABLED:
+            if atr_value:
+                sl_price = price - (atr_value * 1.2) if requested_dir == "long" else price + (atr_value * 1.2)
+            else:
+                sl_pct = float(order.sl_pct) if float(order.sl_pct) > 0 else DEFAULT_INITIAL_SL_PCT
+                sl_price = price * (1 - sl_pct) if requested_dir == "long" else price * (1 + sl_pct)
+            sl_str = exchange.price_to_precision(sym_ccxt, sl_price)
 
         pos_idx = direction_to_position_idx(requested_dir)
 
         log_suffix = f" idx={pos_idx}" if use_position_idx() else ""
         order_type = "limit" if ENTRY_ORDER_TYPE == "limit" else "market"
-        print(f"🚀 ORDER {sym_ccxt}: type={order_type} side={requested_side} qty={final_qty} SL={sl_str}{log_suffix}")
+        sl_log = f" SL={sl_str}" if sl_str else ""
+        print(f"🚀 ORDER {sym_ccxt}: type={order_type} side={requested_side} qty={final_qty}{sl_log}{log_suffix}")
 
-        params = {"category": "linear", "stopLoss": sl_str}
+        params = {"category": "linear"}
+        if sl_str:
+            params["stopLoss"] = sl_str
         if use_position_idx():
             params["positionIdx"] = pos_idx
         params = strip_position_idx(params)
