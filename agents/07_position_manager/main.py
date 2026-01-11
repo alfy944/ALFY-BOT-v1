@@ -389,6 +389,7 @@ def get_market_risk_data(symbol: str) -> Dict[str, Any]:
                     "macd_hist": to_float(d.get("macd_hist"), None),
                     "rsi": to_float(d.get("rsi"), None),
                     "ema_20": to_float((d.get("details", {}) or {}).get("ema_20"), None),
+                    "bb_middle": to_float(d.get("bb_middle"), None),
                 }
     except Exception:
         pass
@@ -456,8 +457,20 @@ def check_and_update_trailing_stops():
             atr = risk_data.get("atr")
             momentum_exit = risk_data.get("momentum_exit") or {}
             ema_20 = to_float(risk_data.get("ema_20"), 0.0)
+            bb_middle = to_float(risk_data.get("bb_middle"), 0.0)
 
             # Momentum-based soft exit disabled to avoid negative auto-closes
+
+            # Bollinger mid-band exit
+            if bb_middle > 0:
+                if side_dir == "long" and mark_price >= bb_middle:
+                    print(f"🎯 BB mid exit for {symbol} (long) @ {mark_price:.6f}")
+                    execute_close_position(symbol)
+                    continue
+                if side_dir == "short" and mark_price <= bb_middle:
+                    print(f"🎯 BB mid exit for {symbol} (short) @ {mark_price:.6f}")
+                    execute_close_position(symbol)
+                    continue
 
             # Track initial SL distance per symbol for 1R calculations
             meta = position_risk_meta.get(sym_id, {})
@@ -489,28 +502,7 @@ def check_and_update_trailing_stops():
             elapsed_minutes = (time.time() - entry_ts) / 60.0
             profit_distance = (mark_price - entry_price) if side_dir == "long" else (entry_price - mark_price)
 
-            # Partial take profit at 1R
-            if risk_distance > 0 and not position_risk_meta.get(sym_id, {}).get("partial_tp_taken"):
-                if profit_distance >= (risk_distance * PARTIAL_TP_R):
-                    try:
-                        target_market = exchange.market(symbol)
-                        info = target_market.get("info", {}) or {}
-                        lot_filter = info.get("lotSizeFilter", {}) or {}
-                        qty_step = to_float(lot_filter.get("qtyStep") or (target_market.get("limits", {}).get("amount", {}) or {}).get("min"), 0.001)
-                        min_qty = to_float(lot_filter.get("minOrderQty") or qty_step, qty_step)
-                        partial_qty = max(qty * PARTIAL_TP_PCT, min_qty)
-                        partial_qty = float(exchange.amount_to_precision(symbol, partial_qty))
-                        if partial_qty >= min_qty:
-                            close_side = "sell" if side_dir == "long" else "buy"
-                            params = {"category": "linear", "reduceOnly": True}
-                            if use_position_idx():
-                                params["positionIdx"] = get_position_idx_from_position(p)
-                            params = strip_position_idx(params)
-                            exchange.create_order(symbol, "market", close_side, partial_qty, params=params)
-                            position_risk_meta[sym_id]["partial_tp_taken"] = True
-                            print(f"✅ Partial TP {symbol} {side_dir}: {partial_qty} @ {profit_distance:.6f}")
-                    except Exception as e:
-                        print(f"⚠️ Partial TP failed for {symbol}: {e}")
+            # Partial take profit disabled (BB-only exits)
 
             if STOP_LOSS_ENABLED:
                 # Break-even: lock stop to entry after 1R
