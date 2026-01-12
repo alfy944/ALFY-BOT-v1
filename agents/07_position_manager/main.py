@@ -48,7 +48,10 @@ PARTIAL_TP_PCT = float(os.getenv("PARTIAL_TP_PCT", "0.5"))
 PARTIAL_TP_R = float(os.getenv("PARTIAL_TP_R", "0.8"))
 TRAILING_ATR_MULTIPLIER = float(os.getenv("TRAILING_ATR_MULTIPLIER", "1.1"))
 ENTRY_ORDER_TYPE = os.getenv("ENTRY_ORDER_TYPE", "limit").lower()
-STOP_LOSS_ENABLED = False
+STOP_LOSS_ENABLED = os.getenv("STOP_LOSS_ENABLED", "true").lower() == "true"
+TAKE_PROFIT_ENABLED = os.getenv("TAKE_PROFIT_ENABLED", "true").lower() == "true"
+PARTIAL_TP_ENABLED = os.getenv("PARTIAL_TP_ENABLED", "true").lower() == "true"
+FULL_TP_R = float(os.getenv("FULL_TP_R", "1.6"))
 
 # --- PARAMETRI AI REVIEW / REVERSE ---
 ENABLE_AI_REVIEW = os.getenv("ENABLE_AI_REVIEW", "true").lower() == "true"
@@ -502,7 +505,19 @@ def check_and_update_trailing_stops():
             elapsed_minutes = (time.time() - entry_ts) / 60.0
             profit_distance = (mark_price - entry_price) if side_dir == "long" else (entry_price - mark_price)
 
-            # Partial take profit disabled (BB-only exits)
+            if risk_distance > 0 and TAKE_PROFIT_ENABLED and profit_distance >= (risk_distance * FULL_TP_R):
+                print(f"🏁 Full TP hit for {symbol} @ {mark_price:.6f}")
+                execute_close_position(symbol)
+                continue
+
+            if (
+                risk_distance > 0
+                and PARTIAL_TP_ENABLED
+                and not position_risk_meta.get(sym_id, {}).get("partial_tp_taken")
+                and profit_distance >= (risk_distance * PARTIAL_TP_R)
+            ):
+                if execute_partial_close(symbol, PARTIAL_TP_PCT):
+                    position_risk_meta[sym_id]["partial_tp_taken"] = True
 
             if STOP_LOSS_ENABLED:
                 # Break-even: lock stop to entry after 1R
@@ -712,6 +727,51 @@ def execute_close_position(symbol: str) -> bool:
 
     except Exception as e:
         print(f"❌ Errore chiusura posizione {symbol}: {e}")
+        return False
+
+def execute_partial_close(symbol: str, close_pct: float) -> bool:
+    if not exchange:
+        return False
+
+    try:
+        sym_id = bybit_symbol_id(symbol)
+        sym_ccxt = ccxt_symbol_from_id(exchange, sym_id) or symbol
+        positions = exchange.fetch_positions([sym_ccxt], params={"category": "linear"})
+
+        position = None
+        for p in positions:
+            if to_float(p.get("contracts"), 0.0) > 0:
+                position = p
+                break
+
+        if not position:
+            print(f"⚠️ Nessuna posizione aperta per {symbol}")
+            return False
+
+        size = to_float(position.get("contracts"), 0.0)
+        if size <= 0:
+            return False
+
+        close_size_raw = max(size * close_pct, 0.0)
+        if close_size_raw <= 0:
+            return False
+        close_size = to_float(exchange.amount_to_precision(sym_ccxt, close_size_raw), close_size_raw)
+
+        side_dir = normalize_position_side(position.get("side", "")) or "long"
+        close_side = "sell" if side_dir == "long" else "buy"
+        position_idx = get_position_idx_from_position(position) if use_position_idx() else 0
+
+        params = {"category": "linear", "reduceOnly": True}
+        if use_position_idx():
+            params["positionIdx"] = position_idx
+        params = strip_position_idx(params)
+
+        print(f"🎯 Partial TP {sym_ccxt}: size={close_size:.6f} pct={close_pct:.2f}")
+        exchange.create_order(sym_ccxt, "market", close_side, close_size, params=params)
+        return True
+
+    except Exception as e:
+        print(f"❌ Errore chiusura parziale {symbol}: {e}")
         return False
 
 def execute_reverse(symbol: str, current_side_raw: str, recovery_size_pct: float) -> bool:
@@ -1234,6 +1294,8 @@ def open_position(order: OrderRequest):
 
         sl_price = None
         sl_str = None
+        tp_price = None
+        tp_str = None
         if STOP_LOSS_ENABLED:
             if atr_value:
                 sl_price = price - (atr_value * 1.2) if requested_dir == "long" else price + (atr_value * 1.2)
@@ -1241,17 +1303,26 @@ def open_position(order: OrderRequest):
                 sl_pct = float(order.sl_pct) if float(order.sl_pct) > 0 else DEFAULT_INITIAL_SL_PCT
                 sl_price = price * (1 - sl_pct) if requested_dir == "long" else price * (1 + sl_pct)
             sl_str = exchange.price_to_precision(sym_ccxt, sl_price)
+        if TAKE_PROFIT_ENABLED and sl_price:
+            risk_distance = abs(price - sl_price)
+            if risk_distance > 0:
+                tp_price = price + (risk_distance * FULL_TP_R) if requested_dir == "long" else price - (risk_distance * FULL_TP_R)
+                tp_str = exchange.price_to_precision(sym_ccxt, tp_price)
 
         pos_idx = direction_to_position_idx(requested_dir)
 
         log_suffix = f" idx={pos_idx}" if use_position_idx() else ""
         order_type = "limit" if ENTRY_ORDER_TYPE == "limit" else "market"
         sl_log = f" SL={sl_str}" if sl_str else ""
-        print(f"🚀 ORDER {sym_ccxt}: type={order_type} side={requested_side} qty={final_qty}{sl_log}{log_suffix}")
+        tp_log = f" TP={tp_str}" if tp_str else ""
+        print(f"🚀 ORDER {sym_ccxt}: type={order_type} side={requested_side} qty={final_qty}{sl_log}{tp_log}{log_suffix}")
 
         params = {"category": "linear"}
         if sl_str:
             params["stopLoss"] = sl_str
+        if tp_str:
+            params["takeProfit"] = tp_str
+            params["tpslMode"] = "Full"
         if use_position_idx():
             params["positionIdx"] = pos_idx
         params = strip_position_idx(params)
@@ -1272,6 +1343,8 @@ def open_position(order: OrderRequest):
             "entry_price": price,
             "initial_sl": sl_price,
             "breakeven_reached": False,
+            "entry_ts": time.time(),
+            "partial_tp_taken": False,
         }
         return {"status": "executed", "id": res.get("id")}
 
@@ -1281,8 +1354,9 @@ def open_position(order: OrderRequest):
 
 @app.post("/close_position")
 def close_position(req: CloseRequest):
-    # se vuoi abilitarlo manualmente, puoi chiamare execute_close_position(req.symbol)
-    return {"status": "manual_only"}
+    if execute_close_position(req.symbol):
+        return {"status": "closed"}
+    return {"status": "error"}
 
 @app.post("/manage_active_positions")
 def manage():

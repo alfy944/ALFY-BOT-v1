@@ -19,7 +19,7 @@ client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
 BB_MIN_WIDTH = float(os.getenv("BB_MIN_WIDTH", "0.001"))
 BB_BREACH_PCT = float(os.getenv("BB_BREACH_PCT", "0.002"))
 TREND_ALIGNMENT_REQUIRED = os.getenv("TREND_ALIGNMENT_REQUIRED", "false").lower() == "true"
-BB_ONLY_STRATEGY = os.getenv("BB_ONLY_STRATEGY", "true").lower() == "true"
+BB_ONLY_STRATEGY = os.getenv("BB_ONLY_STRATEGY", "false").lower() == "true"
 
 # Agent URLs for reverse analysis
 AGENT_URLS = {
