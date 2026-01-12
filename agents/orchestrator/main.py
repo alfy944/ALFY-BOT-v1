@@ -334,7 +334,11 @@ async def analysis_cycle():
                 action = d['action']
                 
                 if action == "CLOSE":
-                    print(f"        🛡️ Ignorato CLOSE su {sym} (Auto-Close Disabled)")
+                    print(f"        🔒 EXECUTING CLOSE on {sym}...")
+                    res = await c.post(f"{URLS['pos']}/close_position", json={
+                        "symbol": sym
+                    })
+                    print(f"        ✅ Result: {res.json()}")
                     continue
 
                 if action in ["OPEN_LONG", "OPEN_SHORT"]:
